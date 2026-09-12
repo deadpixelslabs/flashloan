@@ -37,7 +37,7 @@
         <button class="btn" id="stopBtn" disabled>■ STOP</button>
         <button class="btn warn" id="deepBtn">DEEP SCAN TOP</button>
       </div>
-      <div class="notice"><b>What this version proves:</b> exact onchain quotes across Uniswap V2, direct USDG Stock-Token Uniswap V3 pools (0.01% / 0.05% / 0.30% / 1.00%), and discovered Uniswap V4 USDG pools. DEX fees and price impact are already inside the quote. V4 PoolKeys are discovered from a public index, but every V4 amount is re-quoted directly against the official onchain Uniswap V4 Quoter. Gas is a conservative estimate until the atomic executor exists. V1.1 proxies Robinhood/Fletch REST calls through your Vercel domain to avoid browser CORS blocks.</div>
+      <div class="notice"><b>What this version proves:</b> exact onchain quotes across Uniswap V2, direct USDG Stock-Token Uniswap V3 pools (0.01% / 0.05% / 0.30% / 1.00%), and discovered Uniswap V4 USDG pools. DEX fees and price impact are already inside the quote. V4 PoolKeys are discovered from a public index, but every V4 amount is re-quoted directly against the official onchain Uniswap V4 Quoter. Gas is a conservative estimate until the atomic executor exists. V1.2 uses direct parallel RPC eth_call waves instead of Multicall3, and proxies Robinhood/Fletch REST calls through your Vercel domain to avoid browser CORS blocks.</div>
     </section>
 
     <section class="panel p16">
@@ -216,20 +216,33 @@ async function loadAssets(){
   finally{disableBusy(false);}
 }
 
-async function multicallRaw(callObjects,blockTag){
+async function rpcCallRaw(callObjects,blockTag,phase='QUOTE'){
   if(!callObjects.length) return [];
   const out=[]; const tag=ethers.toQuantity(blockTag);
-  for(const batch of chunks(callObjects,25)){
-    const encoded=multiIface.encodeFunctionData('aggregate3',[batch.map(x=>({target:x.target,allowFailure:true,callData:x.callData}))]);
-    let ret;
-    try{ ret=await state.provider.send('eth_call',[{to:MULTICALL3,data:encoded,gas:ethers.toQuantity(30000000)},tag]); }
-    catch(e){
-      log('Multicall batch fallback: '+(e.shortMessage||e.message).slice(0,110),'dim');
-      for(const x of batch){ try{ const r=await state.provider.send('eth_call',[{to:x.target,data:x.callData},tag]); out.push({success:true,returnData:r,meta:x.meta}); }catch(_){out.push({success:false,returnData:'0x',meta:x.meta});} }
-      continue;
+  // Robinhood public RPC is reliable for direct eth_call, while generic Multicall3 can
+  // revert as a whole for Quoter-style calls. Run independent calls in small parallel waves.
+  const concurrency=12;
+  let done=0, ok=0;
+  const callOne=async(x)=>{
+    try{
+      const rpcPromise=state.provider.send('eth_call',[{to:x.target,data:x.callData},tag]);
+      const timeout=new Promise((_,rej)=>setTimeout(()=>rej(new Error('eth_call timeout')),12000));
+      const r=await Promise.race([rpcPromise,timeout]);
+      ok++;
+      return {success:true,returnData:r,meta:x.meta};
+    }catch(_e){
+      return {success:false,returnData:'0x',meta:x.meta};
+    }finally{done++;}
+  };
+  log(phase+': '+callObjects.length+' direct eth_call requests · '+concurrency+' parallel','dim');
+  for(let i=0;i<callObjects.length;i+=concurrency){
+    const wave=callObjects.slice(i,i+concurrency);
+    out.push(...await Promise.all(wave.map(callOne)));
+    if(done===callObjects.length || done%120<concurrency){
+      log(phase+' progress '+done+'/'+callObjects.length+' · '+ok+' successful','dim');
     }
-    const decoded=multiIface.decodeFunctionResult('aggregate3',ret)[0];
-    decoded.forEach((r,i)=>out.push({success:r.success,returnData:r.returnData,meta:batch[i].meta}));
+    // tiny yield keeps the browser responsive and is kinder to public RPC rate limits
+    if(i+concurrency<callObjects.length) await sleep(15);
   }
   return out;
 }
@@ -266,6 +279,12 @@ function decodeQuotes(results){
   }
   return map;
 }
+function logVenueHits(label,map){
+  const counts=new Map(); let total=0;
+  for(const arr of map.values()) for(const q of arr){ const k=q.label||venueLabel(q.venue); counts.set(k,(counts.get(k)||0)+1); total++; }
+  const parts=[...counts.entries()].sort((a,b)=>b[1]-a[1]).slice(0,10).map(([k,n])=>k+' '+n);
+  log(label+' decoded routes: '+total+(parts.length?' · '+parts.join(' | '):' · none'),'dim');
+}
 
 async function refreshGas(blockTag){
   try{ const gp=await state.provider.send('eth_gasPrice',[]); state.gasPriceWei=BigInt(gp); }catch(_){state.gasPriceWei=100000000n;}
@@ -273,7 +292,7 @@ async function refreshGas(blockTag){
     const amt=ethers.parseUnits('0.1',18); const dummy=[{symbol:'WETH',address:WETH}]; const calls=buildQuoteCalls(dummy,amt,'buy'); // wrong token pair for dummy; override below
     calls.length=0;
     for(const v of VENUES){ if(v.type==='v2') calls.push({target:V2_ROUTER,callData:v2Iface.encodeFunctionData('getAmountsOut',[amt,[WETH,USDG]]),meta:{symbol:'WETH',venue:v.key,type:'v2'}}); else calls.push({target:V3_QUOTER,callData:v3Iface.encodeFunctionData('quoteExactInputSingle',[[WETH,USDG,amt,v.fee,0]]),meta:{symbol:'WETH',venue:v.key,type:'v3'}}); }
-    const res=decodeQuotes(await multicallRaw(calls,blockTag)).get('WETH')||[]; const best=res.sort((a,b)=>a.amountOut>b.amountOut?-1:1)[0]; if(best) state.ethUsd=bigintToNum(best.amountOut,state.usdgDecimals)/0.1;
+    const res=decodeQuotes(await rpcCallRaw(calls,blockTag,'GAS REF')).get('WETH')||[]; const best=res.sort((a,b)=>a.amountOut>b.amountOut?-1:1)[0]; if(best) state.ethUsd=bigintToNum(best.amountOut,state.usdgDecimals)/0.1;
   }catch(_e){}
   els('gasStatus').textContent=(Number(state.gasPriceWei)/1e9).toFixed(4)+' gwei · ETH ≈ '+(state.ethUsd?money(state.ethUsd):'unknown');
 }
@@ -297,10 +316,12 @@ async function scanAtSize(assets,size,scanType='quick',save=true,render=true){
   const block=await state.provider.getBlockNumber(); await refreshGas(block);
   const amountRaw=ethers.parseUnits(String(size),state.usdgDecimals);
   log(scanType.toUpperCase()+': '+assets.length+' tokens @ '+money(size)+' · block '+block.toLocaleString());
-  const buyMap=decodeQuotes(await multicallRaw(buildQuoteCalls(assets,amountRaw,'buy'),block));
+  const buyRaw=await rpcCallRaw(buildQuoteCalls(assets,amountRaw,'buy'),block,'BUY');
+  const buyMap=decodeQuotes(buyRaw); logVenueHits('BUY',buyMap);
   const bestBuyAmt=new Map(); const bestBuyMeta=new Map();
   for(const a of assets){ const qs=(buyMap.get(a.symbol)||[]).sort((x,y)=>x.amountOut>y.amountOut?-1:1); if(qs.length){bestBuyAmt.set(a.symbol,qs[0].amountOut);bestBuyMeta.set(a.symbol,qs[0]);} }
-  const sellMap=decodeQuotes(await multicallRaw(buildQuoteCalls(assets,amountRaw,'sell',bestBuyAmt),block));
+  const sellRaw=await rpcCallRaw(buildQuoteCalls(assets,amountRaw,'sell',bestBuyAmt),block,'SELL');
+  const sellMap=decodeQuotes(sellRaw); logVenueHits('SELL',sellMap);
   const rows=[]; const scanGroupId=scanType.toUpperCase()+'-'+Date.now()+'-'+(++state.scanSeq);
   for(const a of assets){
     const buy=bestBuyMeta.get(a.symbol); if(!buy)continue; const sells=(sellMap.get(a.symbol)||[]).filter(x=>x.venue!==buy.venue).sort((x,y)=>x.amountOut>y.amountOut?-1:1); if(!sells.length)continue; const sell=sells[0];
@@ -358,7 +379,7 @@ function stopShadow(){ if(state.auto)clearInterval(state.auto); state.auto=null;
 function downloadBlob(name,text,type){ const blob=new Blob([text],{type}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},800); }
 function csvEscape(v){ if(v===null||v===undefined)return ''; const s=typeof v==='object'?JSON.stringify(v):String(v); return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s; }
 async function exportCSV(){ const rows=await idbAll('rows'); if(!rows.length){log('No saved rows to export.','err');return;} const keys=['timestamp','scanType','block','symbol','address','size','buyVenue','sellVenue','buyTokenQty','sellOutUsdg','grossProfit','grossPct','gasPriceGwei','ethUsd','gasUnits','gasUsd','safetyBufferBps','safetyBufferUsd','netProfit','netRoi','availableVenues','streak','refBid','refAsk','refMid','refDeviationPct','refGeneratedAt','isTradingHalt','score','v4Included','notes']; const csv=[keys.join(','),...rows.map(r=>keys.map(k=>csvEscape(r[k])).join(','))].join('\n'); downloadBlob('robinhood-arb-data-'+new Date().toISOString().replace(/[:.]/g,'-')+'.csv',csv,'text/csv;charset=utf-8');log('CSV exported: '+rows.length+' rows.','ok'); }
-async function exportJSON(){ const rows=await idbAll('rows'), summaries=await idbAll('summaries'); const payload={exportedAt:nowIso(),scanner:'Robinhood Stock Arb Scanner V1.1',schemaVersion:1,methodology:{chainId:CHAIN_ID,baseToken:'USDG',baseTokenAddress:USDG,stockDecimals:18,venues:VENUES,v4Included:state.v4PoolCount>0,v4DiscoveredPoolCount:state.v4PoolCount,v4DiscoveryEndpoint:FLETCH_POOLS_API_DIRECT,v4Quoter:V4_QUOTER,quoteMethod:'exact input eth_call at requested block; direct USDG pools; V4 PoolKeys discovered then re-quoted onchain',warning:'Gas is estimated. Full atomic executor simulation is not available in V1. V4 index data is discovery-only; quote amounts come from the onchain Uniswap V4 Quoter.'},settings:{rpcHost:safeHost(els('rpc').value),quickSize:Number(els('quickSize').value),intervalSec:Number(els('interval').value),safetyBufferBps:Number(els('bufferBps').value),executorOverheadGas:Number(els('overheadGas').value),deepSizes:els('deepSizes').value},assetCount:state.assets.length,v4DiscoveredPoolCount:state.v4PoolCount,summaries,rows}; downloadBlob('robinhood-arb-full-'+new Date().toISOString().replace(/[:.]/g,'-')+'.json',JSON.stringify(payload,null,2),'application/json');log('Full JSON exported: '+rows.length+' rows + '+summaries.length+' summaries. Send this JSON to ChatGPT for analysis.','ok'); }
+async function exportJSON(){ const rows=await idbAll('rows'), summaries=await idbAll('summaries'); const payload={exportedAt:nowIso(),scanner:'Robinhood Stock Arb Scanner V1.2',schemaVersion:1,methodology:{chainId:CHAIN_ID,baseToken:'USDG',baseTokenAddress:USDG,stockDecimals:18,venues:VENUES,v4Included:state.v4PoolCount>0,v4DiscoveredPoolCount:state.v4PoolCount,v4DiscoveryEndpoint:FLETCH_POOLS_API_DIRECT,v4Quoter:V4_QUOTER,quoteMethod:'independent exact-input eth_call requests at one requested block, concurrency-limited; direct USDG pools; V4 PoolKeys discovered then re-quoted onchain',warning:'Gas is estimated. Full atomic executor simulation is not available in V1. V4 index data is discovery-only; quote amounts come from the onchain Uniswap V4 Quoter.'},settings:{rpcHost:safeHost(els('rpc').value),quickSize:Number(els('quickSize').value),intervalSec:Number(els('interval').value),safetyBufferBps:Number(els('bufferBps').value),executorOverheadGas:Number(els('overheadGas').value),deepSizes:els('deepSizes').value},assetCount:state.assets.length,v4DiscoveredPoolCount:state.v4PoolCount,summaries,rows}; downloadBlob('robinhood-arb-full-'+new Date().toISOString().replace(/[:.]/g,'-')+'.json',JSON.stringify(payload,null,2),'application/json');log('Full JSON exported: '+rows.length+' rows + '+summaries.length+' summaries. Send this JSON to ChatGPT for analysis.','ok'); }
 
 els('loadBtn').onclick=loadAssets; els('scanBtn').onclick=()=>runQuick(false); els('startBtn').onclick=startShadow; els('stopBtn').onclick=stopShadow; els('deepBtn').onclick=runDeep; els('csvBtn').onclick=exportCSV; els('jsonBtn').onclick=exportJSON; els('clearBtn').onclick=async()=>{ if(!confirm('Delete all locally saved scanner history?'))return; await idbClear();state.savedRows=0;els('mSaved').textContent='0';log('History cleared.','dim');}; els('search').oninput=renderTable;
 els('tabs').addEventListener('click',e=>{const t=e.target.closest('.tab');if(!t)return;document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));t.classList.add('active');state.filter=t.dataset.filter;renderTable();});
