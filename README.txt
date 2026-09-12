@@ -1,18 +1,14 @@
-ROBINHOOD STOCK ARB SCANNER V1.1 — CORS FIX
+Robinhood Stock Arb Scanner V1.3 FAST
 
-IMPORTANT:
-Deploy BOTH files at the project root:
-  index.html
-  vercel.json
+Deploy index.html and vercel.json together at the project root.
 
-Why V1 failed:
-The browser could reach Robinhood Chain RPC, but direct browser requests to the Robinhood/Fletch REST APIs can be blocked by CORS.
-V1.1 sends those REST calls to same-origin paths on your Vercel domain. vercel.json rewrites them server-side to the official/public upstream endpoints.
+Changes vs V1.2:
+- JSON-RPC batch eth_call with adaptive split fallback
+- same-origin /proxy/rpc for the default Robinhood RPC
+- first scan discovers live routes; later quick scans use a cached topology
+- SELL phase only quotes venues that successfully responded in BUY discovery
+- reference REST calls removed from quick-scan critical path
+- Shadow Mode never overlaps scans
+- scan completion log includes duration
 
-After deploy:
-1. Open the site.
-2. Click LOAD ASSETS.
-3. The log should show: "Official asset registry loaded through same-origin Vercel proxy."
-4. Then click SCAN ONCE.
-
-No wallet/private key is required. Scanner remains read-only.
+Read-only. No wallet/private key and no transaction sending.

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Robinhood Chain Stock Arb Scanner V1.1 — Shadow Mode</title>
+<title>Robinhood Chain Stock Arb Scanner V1.3 FAST — Shadow Mode</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 64 64%22><rect width=%2264%22 height=%2264%22 rx=%2214%22 fill=%22%230a0d0b%22/><path d=%22M10 42L23 29l9 8 18-20%22 fill=%22none%22 stroke=%22%2300ff84%22 stroke-width=%226%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22/><circle cx=%2250%22 cy=%2217%22 r=%225%22 fill=%22%2300ff84%22/></svg>">
 <style>
 :root{--bg:#070a08;--panel:#0d120f;--panel2:#111813;--line:#1d2a21;--txt:#f1f7f3;--muted:#8ea198;--green:#00ff84;--green2:#00c86a;--yellow:#ffd166;--red:#ff5c6c;--blue:#70a5ff;--shadow:0 24px 80px rgba(0,0,0,.35)}
@@ -15,7 +15,7 @@
   <div class="topbar">
     <div class="brand">
       <div class="logo"><svg viewBox="0 0 64 64" aria-hidden="true"><path d="M8 44L23 29l10 9 21-24" fill="none" stroke="#00ff84" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/><circle cx="54" cy="14" r="5" fill="#00ff84"/></svg></div>
-      <div class="title"><h1>STOCK ARB SCANNER <span style="color:var(--green)">V1.1</span></h1><p>Robinhood Chain · USDG ↔ Stock Tokens · Read-only Shadow Mode</p></div>
+      <div class="title"><h1>STOCK ARB SCANNER <span style="color:var(--green)">V1.3 FAST</span></h1><p>Robinhood Chain · USDG ↔ Stock Tokens · Read-only Shadow Mode</p></div>
     </div>
     <div class="live"><span id="liveDot" class="dot"></span><span id="liveText">OFFLINE</span></div>
   </div>
@@ -26,7 +26,7 @@
       <div class="controls">
         <div class="field"><label>Robinhood Chain RPC</label><input id="rpc" value="https://rpc.mainnet.chain.robinhood.com" /></div>
         <div class="field"><label>Quick size (USDG)</label><input id="quickSize" type="number" value="1000" min="1" /></div>
-        <div class="field"><label>Auto interval</label><select id="interval"><option value="30">30 sec</option><option value="60" selected>60 sec</option><option value="120">2 min</option><option value="300">5 min</option></select></div>
+        <div class="field"><label>Auto interval</label><select id="interval"><option value="5">5 sec</option><option value="10">10 sec</option><option value="30" selected>30 sec</option><option value="60">60 sec</option><option value="120">2 min</option></select></div>
         <div class="field"><label>Safety buffer (bps)</label><input id="bufferBps" type="number" value="5" min="0" max="100" step="1" /></div>
         <div class="field"><label>Executor overhead gas</label><input id="overheadGas" type="number" value="220000" min="0" step="10000" /></div>
       </div>
@@ -37,7 +37,7 @@
         <button class="btn" id="stopBtn" disabled>■ STOP</button>
         <button class="btn warn" id="deepBtn">DEEP SCAN TOP</button>
       </div>
-      <div class="notice"><b>What this version proves:</b> exact onchain quotes across Uniswap V2, direct USDG Stock-Token Uniswap V3 pools (0.01% / 0.05% / 0.30% / 1.00%), and discovered Uniswap V4 USDG pools. DEX fees and price impact are already inside the quote. V4 PoolKeys are discovered from a public index, but every V4 amount is re-quoted directly against the official onchain Uniswap V4 Quoter. Gas is a conservative estimate until the atomic executor exists. V1.2 uses direct parallel RPC eth_call waves instead of Multicall3, and proxies Robinhood/Fletch REST calls through your Vercel domain to avoid browser CORS blocks.</div>
+      <div class="notice"><b>What this version proves:</b> exact onchain quotes across Uniswap V2, direct USDG Stock-Token Uniswap V3 pools (0.01% / 0.05% / 0.30% / 1.00%), and discovered Uniswap V4 USDG pools. DEX fees and price impact are already inside the quote. V4 PoolKeys are discovered from a public index, but every V4 amount is re-quoted directly against the official onchain Uniswap V4 Quoter. Gas is a conservative estimate until the atomic executor exists. V1.3 FAST uses JSON-RPC batching, automatically caches live route topology, and only re-quotes venues that actually exist after discovery. The first scan is a topology scan; later Shadow scans are much smaller and faster. If the RPC rejects large batches, it automatically splits them into smaller batches instead of stalling.</div>
     </section>
 
     <section class="panel p16">
@@ -87,7 +87,7 @@
     </section>
   </div>
 
-  <div class="footer"><span>Canonical USDG: 0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168 · Chain ID 4663</span><span>V1.1 CORS-safe REST proxy · quotes can disappear before execution</span></div>
+  <div class="footer"><span>Canonical USDG: 0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168 · Chain ID 4663</span><span>V1.3 FAST · batched RPC + live-route cache · quotes can disappear before execution</span></div>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/ethers@6.13.4/dist/ethers.umd.min.js"></script>
 <script>
@@ -112,7 +112,7 @@ const VENUES = [
   ...V3_FEES.map(f=>({key:'V3-'+f,label:'Uni V3 '+(f/10000).toFixed(f===100?2: f===500?2:1)+'%',type:'v3',fee:f}))
 ];
 const els = id => document.getElementById(id);
-const state = { provider:null, assets:[], v4Pools:new Map(), v4PoolCount:0, usdgDecimals:6, latest:[], auto:null, scanning:false, db:null, ethUsd:0, gasPriceWei:0n, savedRows:0, filter:'all', streaks:new Map(), scanSeq:0 };
+const state = { provider:null, assets:[], v4Pools:new Map(), v4PoolCount:0, usdgDecimals:6, latest:[], auto:null, autoTimer:null, scanning:false, db:null, ethUsd:0, gasPriceWei:0n, savedRows:0, filter:'all', streaks:new Map(), scanSeq:0, routeCache:new Map(), quickScanCount:0, lastDurationMs:0, rpcBatchSupported:null };
 const v2Iface = new ethers.Interface(['function getAmountsOut(uint256 amountIn,address[] path) view returns (uint256[] amounts)']);
 const v3Iface = new ethers.Interface(['function quoteExactInputSingle((address tokenIn,address tokenOut,uint256 amountIn,uint24 fee,uint160 sqrtPriceLimitX96) params) returns (uint256 amountOut,uint160 sqrtPriceX96After,uint32 initializedTicksCrossed,uint256 gasEstimate)']);
 const multiIface = new ethers.Interface(['function aggregate3((address target,bool allowFailure,bytes callData)[] calls) payable returns ((bool success,bytes returnData)[] returnData)']);
@@ -207,62 +207,137 @@ async function loadAssets(){
     await initProvider();
     let raw;
     try{ raw=await fetchJSON(ASSET_API,ASSET_API_DIRECT,'Official asset registry'); localStorage.setItem('rh-assets-cache',JSON.stringify(raw)); }
-    catch(e){ const cache=localStorage.getItem('rh-assets-cache'); if(!cache) throw new Error('Official asset registry failed and no cache exists: '+e.message+' — deploy V1.1 together with vercel.json.'); raw=JSON.parse(cache); log('Official asset API unavailable; using cached registry.','err'); }
+    catch(e){ const cache=localStorage.getItem('rh-assets-cache'); if(!cache) throw new Error('Official asset registry failed and no cache exists: '+e.message+' — deploy V1.3 together with vercel.json.'); raw=JSON.parse(cache); log('Official asset API unavailable; using cached registry.','err'); }
     const list=(raw.assets||[]).map(a=>{const dep=(a.deployments||[]).find(d=>Number(d.chainId)===CHAIN_ID); return dep?{symbol:a.tokenSymbol,name:a.tokenName,address:dep.contractAddress,multiplier:Number(a.currentMultiplier||1),status:a.status,logoUrl:a.logoUrl||'',tradingCapabilities:a.tradingCapabilities||{}}:null;}).filter(Boolean).filter(a=>!a.status||a.status==='ASSET_STATUS_ACTIVE');
     state.assets=list; els('mAssets').textContent=list.length;
+    restoreLiveRoutes();
     await loadV4Pools();
     els('assetStatus').textContent=list.length+' active · '+state.v4PoolCount+' V4 PoolKeys'; log('Loaded '+list.length+' official Stock Tokens.','ok');
   }catch(e){ log(e.message,'err'); els('assetStatus').textContent='Load failed · see log'; setLive(false,'ERROR'); }
   finally{disableBusy(false);}
 }
 
-async function rpcCallRaw(callObjects,blockTag,phase='QUOTE'){
-  if(!callObjects.length) return [];
-  const out=[]; const tag=ethers.toQuantity(blockTag);
-  // Robinhood public RPC is reliable for direct eth_call, while generic Multicall3 can
-  // revert as a whole for Quoter-style calls. Run independent calls in small parallel waves.
-  const concurrency=12;
-  let done=0, ok=0;
-  const callOne=async(x)=>{
-    try{
-      const rpcPromise=state.provider.send('eth_call',[{to:x.target,data:x.callData},tag]);
-      const timeout=new Promise((_,rej)=>setTimeout(()=>rej(new Error('eth_call timeout')),12000));
-      const r=await Promise.race([rpcPromise,timeout]);
-      ok++;
-      return {success:true,returnData:r,meta:x.meta};
-    }catch(_e){
-      return {success:false,returnData:'0x',meta:x.meta};
-    }finally{done++;}
-  };
-  log(phase+': '+callObjects.length+' direct eth_call requests · '+concurrency+' parallel','dim');
-  for(let i=0;i<callObjects.length;i+=concurrency){
-    const wave=callObjects.slice(i,i+concurrency);
-    out.push(...await Promise.all(wave.map(callOne)));
-    if(done===callObjects.length || done%120<concurrency){
-      log(phase+' progress '+done+'/'+callObjects.length+' · '+ok+' successful','dim');
-    }
-    // tiny yield keeps the browser responsive and is kinder to public RPC rate limits
-    if(i+concurrency<callObjects.length) await sleep(15);
-  }
-  return out;
+async function rpcBatchPost(items,blockTag,idBase=1){
+  const tag=ethers.toQuantity(blockTag);
+  const configured=els('rpc').value.trim();
+  const official='https://rpc.mainnet.chain.robinhood.com';
+  const url=configured.replace(/\/$/,'')===official ? '/proxy/rpc' : configured;
+  const payload=items.map((x,i)=>({jsonrpc:'2.0',id:idBase+i,method:'eth_call',params:[{to:x.target,data:x.callData},tag]}));
+  const controller=new AbortController(); const timer=setTimeout(()=>controller.abort(),10000);
+  try{
+    const r=await fetch(url,{method:'POST',headers:{'content-type':'application/json','accept':'application/json'},body:JSON.stringify(payload),signal:controller.signal,cache:'no-store'});
+    if(!r.ok) throw new Error('RPC HTTP '+r.status);
+    const j=await r.json();
+    if(!Array.isArray(j)) throw new Error('RPC batch response is not an array');
+    const byId=new Map(j.map(x=>[Number(x.id),x]));
+    return items.map((x,i)=>{ const rec=byId.get(idBase+i); return rec&&typeof rec.result==='string' ? {success:true,returnData:rec.result,meta:x.meta} : {success:false,returnData:'0x',meta:x.meta}; });
+  } finally { clearTimeout(timer); }
 }
 
-function buildQuoteCalls(assets,amountRaw,direction,buyAmountsBySymbol){
+async function rpcSingle(x,blockTag){
+  try{
+    const tag=ethers.toQuantity(blockTag);
+    const p=state.provider.send('eth_call',[{to:x.target,data:x.callData},tag]);
+    const timeout=new Promise((_,rej)=>setTimeout(()=>rej(new Error('eth_call timeout')),8000));
+    const r=await Promise.race([p,timeout]);
+    return {success:true,returnData:r,meta:x.meta};
+  }catch(_e){ return {success:false,returnData:'0x',meta:x.meta}; }
+}
+
+async function rpcBatchWithFallback(items,blockTag,idBase){
+  try{
+    const r=await rpcBatchPost(items,blockTag,idBase);
+    state.rpcBatchSupported=true;
+    return r;
+  }catch(e){
+    if(items.length<=1){ state.rpcBatchSupported=false; return [await rpcSingle(items[0],blockTag)]; }
+    // Some RPC gateways cap batch size. Split recursively; only fall to singles for the tiny failing leaf.
+    const mid=Math.ceil(items.length/2);
+    const [a,b]=await Promise.all([
+      rpcBatchWithFallback(items.slice(0,mid),blockTag,idBase),
+      rpcBatchWithFallback(items.slice(mid),blockTag,idBase+mid)
+    ]);
+    return a.concat(b);
+  }
+}
+
+async function rpcCallRaw(callObjects,blockTag,phase='QUOTE'){
+  if(!callObjects.length) return [];
+  const batchSize=40, parallelBatches=3;
+  const groups=chunks(callObjects,batchSize); const results=new Array(groups.length);
+  let cursor=0,done=0,ok=0,lastLogged=0;
+  log(phase+': '+callObjects.length+' eth_calls · JSON-RPC batches '+batchSize+' × '+parallelBatches+' parallel','dim');
+  async function worker(){
+    while(true){
+      const idx=cursor++; if(idx>=groups.length) return;
+      const g=groups[idx]; const res=await rpcBatchWithFallback(g,blockTag,1+idx*batchSize);
+      results[idx]=res; done+=g.length; ok+=res.reduce((n,x)=>n+(x.success?1:0),0);
+      if(done===callObjects.length || done-lastLogged>=Math.max(120,batchSize*parallelBatches)){
+        lastLogged=done; log(phase+' progress '+done+'/'+callObjects.length+' · '+ok+' RPC-success','dim');
+      }
+    }
+  }
+  await Promise.all(Array.from({length:Math.min(parallelBatches,groups.length)},worker));
+  return results.flat();
+}
+function buildQuoteCalls(assets,amountRaw,direction,buyAmountsBySymbol,routeFilter=null){
   const calls=[];
   for(const a of assets){
     const inToken=direction==='buy'?USDG:a.address; const outToken=direction==='buy'?a.address:USDG;
     const amt=direction==='buy'?amountRaw:buyAmountsBySymbol?.get(a.symbol);
     if(!amt||amt<=0n) continue;
+    const allowed=routeFilter?.get(a.symbol)||null;
     for(const v of VENUES){
+      if(allowed && !allowed.has(v.key)) continue;
       if(v.type==='v2') calls.push({target:V2_ROUTER,callData:v2Iface.encodeFunctionData('getAmountsOut',[amt,[inToken,outToken]]),meta:{symbol:a.symbol,venue:v.key,label:v.label,type:'v2',direction,amountIn:amt}});
       else calls.push({target:V3_QUOTER,callData:v3Iface.encodeFunctionData('quoteExactInputSingle',[[inToken,outToken,amt,v.fee,0]]),meta:{symbol:a.symbol,venue:v.key,label:v.label,type:'v3',fee:v.fee,direction,amountIn:amt}});
     }
     for(const p of (state.v4Pools.get(a.symbol)||[])){
+      const key='V4:'+p.poolId; if(allowed && !allowed.has(key)) continue;
       const c0=String(p.currency0).toLowerCase(), inLower=inToken.toLowerCase();
       if(inLower!==c0 && inLower!==String(p.currency1).toLowerCase()) continue;
       const zeroForOne=inLower===c0; const poolKey=[p.currency0,p.currency1,p.fee,p.tickSpacing,p.hooks];
-      const key='V4:'+p.poolId; const feeLabel=p.feeDynamic?'dynamic':((Number(p.feePct??p.fee/10000)).toFixed(2)+'%');
+      const feeLabel=p.feeDynamic?'dynamic':((Number(p.feePct??p.fee/10000)).toFixed(2)+'%');
       try{ calls.push({target:V4_QUOTER,callData:v4Iface.encodeFunctionData('quoteExactInputSingle',[[poolKey,zeroForOne,amt,'0x']]),meta:{symbol:a.symbol,venue:key,label:'Uni V4 '+feeLabel+' '+String(p.poolId).slice(2,8),type:'v4',fee:p.fee,poolId:p.poolId,depthUsd:p.depthUsd,direction,amountIn:amt}}); }catch(_e){}
+    }
+  }
+  return calls;
+}
+
+function rememberLiveRoutes(buyMap){
+  for(const [sym,arr] of buyMap){
+    const live=new Set(arr.map(q=>q.venue));
+    if(live.size) state.routeCache.set(sym,live);
+  }
+  try{
+    const obj={}; for(const [sym,set] of state.routeCache)obj[sym]=[...set];
+    localStorage.setItem('rh-live-route-cache-v13',JSON.stringify(obj));
+  }catch(_e){}
+}
+
+function restoreLiveRoutes(){
+  try{
+    const raw=localStorage.getItem('rh-live-route-cache-v13'); if(!raw)return;
+    const obj=JSON.parse(raw); state.routeCache=new Map(Object.entries(obj).map(([k,v])=>[k,new Set(v)]));
+    if(state.routeCache.size) log('Restored live-route cache for '+state.routeCache.size+' Stock Tokens.','ok');
+  }catch(_e){}
+}
+
+function buildSellCallsFromBuyMap(assets,buyMap,bestBuyAmt,bestBuyMeta){
+  const calls=[];
+  for(const a of assets){
+    const amt=bestBuyAmt.get(a.symbol), best=bestBuyMeta.get(a.symbol); if(!amt||!best)continue;
+    const live=(buyMap.get(a.symbol)||[]).filter(q=>q.venue!==best.venue);
+    if(!live.length)continue;
+    for(const q of live){
+      if(q.type==='v2') calls.push({target:V2_ROUTER,callData:v2Iface.encodeFunctionData('getAmountsOut',[amt,[a.address,USDG]]),meta:{...q,direction:'sell',amountIn:amt}});
+      else if(q.type==='v3') calls.push({target:V3_QUOTER,callData:v3Iface.encodeFunctionData('quoteExactInputSingle',[[a.address,USDG,amt,q.fee,0]]),meta:{...q,direction:'sell',amountIn:amt}});
+      else if(q.type==='v4'){
+        const p=(state.v4Pools.get(a.symbol)||[]).find(x=>'V4:'+x.poolId===q.venue); if(!p)continue;
+        const inLower=a.address.toLowerCase(),c0=String(p.currency0).toLowerCase(); const zeroForOne=inLower===c0;
+        const poolKey=[p.currency0,p.currency1,p.fee,p.tickSpacing,p.hooks];
+        try{calls.push({target:V4_QUOTER,callData:v4Iface.encodeFunctionData('quoteExactInputSingle',[[poolKey,zeroForOne,amt,'0x']]),meta:{...q,direction:'sell',amountIn:amt}});}catch(_e){}
+      }
     }
   }
   return calls;
@@ -316,11 +391,17 @@ async function scanAtSize(assets,size,scanType='quick',save=true,render=true){
   const block=await state.provider.getBlockNumber(); await refreshGas(block);
   const amountRaw=ethers.parseUnits(String(size),state.usdgDecimals);
   log(scanType.toUpperCase()+': '+assets.length+' tokens @ '+money(size)+' · block '+block.toLocaleString());
-  const buyRaw=await rpcCallRaw(buildQuoteCalls(assets,amountRaw,'buy'),block,'BUY');
-  const buyMap=decodeQuotes(buyRaw); logVenueHits('BUY',buyMap);
+  const forceDiscovery=scanType!=='quick' || state.routeCache.size===0 || (state.quickScanCount%20===0);
+  const routeFilter=forceDiscovery?null:state.routeCache;
+  if(scanType==='quick') state.quickScanCount++;
+  log(forceDiscovery?'Topology mode: FULL venue discovery.':'FAST mode: using cached live venues for '+state.routeCache.size+' tokens.','dim');
+  const buyCalls=buildQuoteCalls(assets,amountRaw,'buy',null,routeFilter);
+  const buyRaw=await rpcCallRaw(buyCalls,block,'BUY');
+  const buyMap=decodeQuotes(buyRaw); logVenueHits('BUY',buyMap); rememberLiveRoutes(buyMap);
   const bestBuyAmt=new Map(); const bestBuyMeta=new Map();
   for(const a of assets){ const qs=(buyMap.get(a.symbol)||[]).sort((x,y)=>x.amountOut>y.amountOut?-1:1); if(qs.length){bestBuyAmt.set(a.symbol,qs[0].amountOut);bestBuyMeta.set(a.symbol,qs[0]);} }
-  const sellRaw=await rpcCallRaw(buildQuoteCalls(assets,amountRaw,'sell',bestBuyAmt),block,'SELL');
+  const sellCalls=buildSellCallsFromBuyMap(assets,buyMap,bestBuyAmt,bestBuyMeta);
+  const sellRaw=await rpcCallRaw(sellCalls,block,'SELL');
   const sellMap=decodeQuotes(sellRaw); logVenueHits('SELL',sellMap);
   const rows=[]; const scanGroupId=scanType.toUpperCase()+'-'+Date.now()+'-'+(++state.scanSeq);
   for(const a of assets){
@@ -333,7 +414,12 @@ async function scanAtSize(assets,size,scanType='quick',save=true,render=true){
     const row={schemaVersion:1,timestamp:nowIso(),scanId:scanGroupId,scanType,chainId:CHAIN_ID,block,symbol:a.symbol,name:a.name,address:a.address,size:Number(size),buyVenue:buy.venue,buyVenueLabel:buy.label||venueLabel(buy.venue),sellVenue:sell.venue,sellVenueLabel:sell.label||venueLabel(sell.venue),buyTokenQty:bigintToNum(buy.amountOut,18),sellOutUsdg:sellOut,grossProfit,grossPct,gasPriceGwei:Number(state.gasPriceWei)/1e9,ethUsd:state.ethUsd||null,gasUnits:Number(totalGas),gasUsd,safetyBufferBps:bufferBps,safetyBufferUsd:bufferUsd,netProfit,netRoi,availableVenues,streak,refBid:null,refAsk:null,refMid:null,refDeviationPct:null,refGeneratedAt:null,isTradingHalt:null,v4Included:state.v4PoolCount>0,v4Quoter:V4_QUOTER,quoteBlockConsistency:'requested-same-block',notes:'Direct USDG pools only; V2/V3/V4 exact-input quotes. V4 PoolKeys come from a discovery index, while amounts are quoted onchain. Gas is estimated until atomic executor exists.'}; row.score=scoreRow(row,availableVenues); rows.push(row);
   }
   rows.sort((a,b)=>b.netProfit-a.netProfit);
-  const refTargets=rows.filter(r=>r.grossPct>-0.10).slice(0,15); await Promise.all(refTargets.map(r=>fetchReference(r,assets.find(a=>a.symbol===r.symbol)))); refTargets.forEach(r=>r.score=scoreRow(r,r.availableVenues));
+  // Reference-price REST calls are deliberately off the critical path in FAST mode.
+  const refTargets=rows.filter(r=>r.grossPct>-0.10).slice(0,8);
+  if(scanType==='deep'){
+    await Promise.all(refTargets.map(r=>fetchReference(r,assets.find(a=>a.symbol===r.symbol))));
+    refTargets.forEach(r=>r.score=scoreRow(r,r.availableVenues));
+  }
   if(save){ const toSave=rows.filter((r,i)=>r.grossPct>=-0.10 || i<12 || r.netProfit>0); await idbAddMany('rows',toSave); state.savedRows=await idbCount('rows'); }
   if(render){ state.latest=rows; renderTable(); updateMetrics(rows); }
   return rows;
@@ -347,7 +433,8 @@ async function runQuick(auto=false){
     const size=Math.max(1,Number(els('quickSize').value)||1000); const started=Date.now(); const rows=await scanAtSize(state.assets,size,'quick',true,true);
     const routable=rows.length, gross=rows.filter(r=>r.grossProfit>0).length, net=rows.filter(r=>r.netProfit>0).length, best=rows[0]||null;
     await idbAddMany('summaries',[{timestamp:nowIso(),scanType:'quick',size,assetsLoaded:state.assets.length,routable,positiveGross:gross,positiveNet:net,bestSymbol:best?.symbol||null,bestNetProfit:best?.netProfit||null,bestNetRoi:best?.netRoi||null,durationMs:Date.now()-started,rpcHost:safeHost(els('rpc').value),v4Included:state.v4PoolCount>0}]);
-    log('Done: '+routable+' routable · '+gross+' gross+ · '+net+' net+ · best '+(best?best.symbol+' '+money(best.netProfit):'none'),net?'ok':'dim');
+    state.lastDurationMs=Date.now()-started;
+    log('Done in '+(state.lastDurationMs/1000).toFixed(1)+'s: '+routable+' routable · '+gross+' gross+ · '+net+' net+ · best '+(best?best.symbol+' '+money(best.netProfit):'none'),net?'ok':'dim');
   }catch(e){log('SCAN ERROR: '+(e.shortMessage||e.message),'err');}
   finally{state.scanning=false;disableBusy(false);}
 }
@@ -373,13 +460,20 @@ function renderTable(){
 }
 function disableBusy(busy,text){ ['loadBtn','scanBtn','deepBtn'].forEach(id=>els(id).disabled=busy); if(busy&&text) setLive(true,text.toUpperCase()); else if(state.auto) setLive(true,'SHADOW ACTIVE'); else if(state.provider) setLive(true,'CHAIN 4663'); }
 
-function startShadow(){ if(state.auto)return; const sec=Math.max(30,Number(els('interval').value)||60); runQuick(true); state.auto=setInterval(()=>runQuick(true),sec*1000); els('startBtn').disabled=true;els('stopBtn').disabled=false;setLive(true,'SHADOW ACTIVE');log('Shadow Mode started every '+sec+' seconds. Keep this tab open.','ok'); }
-function stopShadow(){ if(state.auto)clearInterval(state.auto); state.auto=null;els('startBtn').disabled=false;els('stopBtn').disabled=true;setLive(!!state.provider,state.provider?'CHAIN 4663':'OFFLINE');log('Shadow Mode stopped.','dim'); }
+async function shadowLoop(){
+  if(!state.auto)return;
+  await runQuick(true);
+  if(!state.auto)return;
+  const sec=Math.max(5,Number(els('interval').value)||30);
+  state.autoTimer=setTimeout(shadowLoop,sec*1000);
+}
+function startShadow(){ if(state.auto)return; state.auto=true; els('startBtn').disabled=true;els('stopBtn').disabled=false;setLive(true,'SHADOW ACTIVE');log('Shadow Mode started. Next scan begins after each completed scan + selected interval.','ok'); shadowLoop(); }
+function stopShadow(){ state.auto=false; if(state.autoTimer)clearTimeout(state.autoTimer); state.autoTimer=null;els('startBtn').disabled=false;els('stopBtn').disabled=true;setLive(!!state.provider,state.provider?'CHAIN 4663':'OFFLINE');log('Shadow Mode stopped.','dim'); }
 
 function downloadBlob(name,text,type){ const blob=new Blob([text],{type}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},800); }
 function csvEscape(v){ if(v===null||v===undefined)return ''; const s=typeof v==='object'?JSON.stringify(v):String(v); return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s; }
 async function exportCSV(){ const rows=await idbAll('rows'); if(!rows.length){log('No saved rows to export.','err');return;} const keys=['timestamp','scanType','block','symbol','address','size','buyVenue','sellVenue','buyTokenQty','sellOutUsdg','grossProfit','grossPct','gasPriceGwei','ethUsd','gasUnits','gasUsd','safetyBufferBps','safetyBufferUsd','netProfit','netRoi','availableVenues','streak','refBid','refAsk','refMid','refDeviationPct','refGeneratedAt','isTradingHalt','score','v4Included','notes']; const csv=[keys.join(','),...rows.map(r=>keys.map(k=>csvEscape(r[k])).join(','))].join('\n'); downloadBlob('robinhood-arb-data-'+new Date().toISOString().replace(/[:.]/g,'-')+'.csv',csv,'text/csv;charset=utf-8');log('CSV exported: '+rows.length+' rows.','ok'); }
-async function exportJSON(){ const rows=await idbAll('rows'), summaries=await idbAll('summaries'); const payload={exportedAt:nowIso(),scanner:'Robinhood Stock Arb Scanner V1.2',schemaVersion:1,methodology:{chainId:CHAIN_ID,baseToken:'USDG',baseTokenAddress:USDG,stockDecimals:18,venues:VENUES,v4Included:state.v4PoolCount>0,v4DiscoveredPoolCount:state.v4PoolCount,v4DiscoveryEndpoint:FLETCH_POOLS_API_DIRECT,v4Quoter:V4_QUOTER,quoteMethod:'independent exact-input eth_call requests at one requested block, concurrency-limited; direct USDG pools; V4 PoolKeys discovered then re-quoted onchain',warning:'Gas is estimated. Full atomic executor simulation is not available in V1. V4 index data is discovery-only; quote amounts come from the onchain Uniswap V4 Quoter.'},settings:{rpcHost:safeHost(els('rpc').value),quickSize:Number(els('quickSize').value),intervalSec:Number(els('interval').value),safetyBufferBps:Number(els('bufferBps').value),executorOverheadGas:Number(els('overheadGas').value),deepSizes:els('deepSizes').value},assetCount:state.assets.length,v4DiscoveredPoolCount:state.v4PoolCount,summaries,rows}; downloadBlob('robinhood-arb-full-'+new Date().toISOString().replace(/[:.]/g,'-')+'.json',JSON.stringify(payload,null,2),'application/json');log('Full JSON exported: '+rows.length+' rows + '+summaries.length+' summaries. Send this JSON to ChatGPT for analysis.','ok'); }
+async function exportJSON(){ const rows=await idbAll('rows'), summaries=await idbAll('summaries'); const payload={exportedAt:nowIso(),scanner:'Robinhood Stock Arb Scanner V1.3 FAST',schemaVersion:1,methodology:{chainId:CHAIN_ID,baseToken:'USDG',baseTokenAddress:USDG,stockDecimals:18,venues:VENUES,v4Included:state.v4PoolCount>0,v4DiscoveredPoolCount:state.v4PoolCount,v4DiscoveryEndpoint:FLETCH_POOLS_API_DIRECT,v4Quoter:V4_QUOTER,quoteMethod:'same-block exact-input eth_call via JSON-RPC batches with adaptive split fallback; cached live-route topology; sell phase only re-quotes venues proven live on buy phase; direct USDG pools; V4 PoolKeys discovered then re-quoted onchain',warning:'Gas is estimated. Full atomic executor simulation is not available in V1. V4 index data is discovery-only; quote amounts come from the onchain Uniswap V4 Quoter.'},settings:{rpcHost:safeHost(els('rpc').value),quickSize:Number(els('quickSize').value),intervalSec:Number(els('interval').value),safetyBufferBps:Number(els('bufferBps').value),executorOverheadGas:Number(els('overheadGas').value),deepSizes:els('deepSizes').value},assetCount:state.assets.length,v4DiscoveredPoolCount:state.v4PoolCount,liveRouteCacheTokens:state.routeCache.size,lastScanDurationMs:state.lastDurationMs,rpcBatchSupported:state.rpcBatchSupported,summaries,rows}; downloadBlob('robinhood-arb-full-'+new Date().toISOString().replace(/[:.]/g,'-')+'.json',JSON.stringify(payload,null,2),'application/json');log('Full JSON exported: '+rows.length+' rows + '+summaries.length+' summaries. Send this JSON to ChatGPT for analysis.','ok'); }
 
 els('loadBtn').onclick=loadAssets; els('scanBtn').onclick=()=>runQuick(false); els('startBtn').onclick=startShadow; els('stopBtn').onclick=stopShadow; els('deepBtn').onclick=runDeep; els('csvBtn').onclick=exportCSV; els('jsonBtn').onclick=exportJSON; els('clearBtn').onclick=async()=>{ if(!confirm('Delete all locally saved scanner history?'))return; await idbClear();state.savedRows=0;els('mSaved').textContent='0';log('History cleared.','dim');}; els('search').oninput=renderTable;
 els('tabs').addEventListener('click',e=>{const t=e.target.closest('.tab');if(!t)return;document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));t.classList.add('active');state.filter=t.dataset.filter;renderTable();});

@@ -2,6 +2,10 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "rewrites": [
     {
+      "source": "/proxy/rpc",
+      "destination": "https://rpc.mainnet.chain.robinhood.com"
+    },
+    {
       "source": "/proxy/rhj/:path*",
       "destination": "https://api.robinhood.com/rhj/:path*"
     },
@@ -14,19 +18,28 @@
     {
       "source": "/proxy/rhj/assets",
       "headers": [
-        { "key": "CDN-Cache-Control", "value": "public, max-age=60, stale-while-revalidate=300" }
+        {
+          "key": "CDN-Cache-Control",
+          "value": "public, max-age=60, stale-while-revalidate=300"
+        }
       ]
     },
     {
       "source": "/proxy/rhj/prices/:path*",
       "headers": [
-        { "key": "CDN-Cache-Control", "value": "public, max-age=10, stale-while-revalidate=30" }
+        {
+          "key": "CDN-Cache-Control",
+          "value": "public, max-age=10, stale-while-revalidate=30"
+        }
       ]
     },
     {
       "source": "/proxy/fletch/:path*",
       "headers": [
-        { "key": "CDN-Cache-Control", "value": "public, max-age=30, stale-while-revalidate=120" }
+        {
+          "key": "CDN-Cache-Control",
+          "value": "public, max-age=30, stale-while-revalidate=120"
+        }
       ]
     }
   ]
