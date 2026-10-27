@@ -42,5 +42,8 @@
         }
       ]
     }
-  ]
+  ],
+  "installCommand": "node --version",
+  "buildCommand": "node --check execution.js",
+  "outputDirectory": "."
 }

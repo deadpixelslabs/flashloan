@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Robinhood Chain Stock Arb Scanner V1.3 FAST — Shadow Mode</title>
+<title>Robinhood Flash Loan — Atomic Arbitrage V2</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 64 64%22><rect width=%2264%22 height=%2264%22 rx=%2214%22 fill=%22%230a0d0b%22/><path d=%22M10 42L23 29l9 8 18-20%22 fill=%22none%22 stroke=%22%2300ff84%22 stroke-width=%226%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22/><circle cx=%2250%22 cy=%2217%22 r=%225%22 fill=%22%2300ff84%22/></svg>">
 <style>
 :root{--bg:#070a08;--panel:#0d120f;--panel2:#111813;--line:#1d2a21;--txt:#f1f7f3;--muted:#8ea198;--green:#00ff84;--green2:#00c86a;--yellow:#ffd166;--red:#ff5c6c;--blue:#70a5ff;--shadow:0 24px 80px rgba(0,0,0,.35)}
@@ -15,7 +15,7 @@
   <div class="topbar">
     <div class="brand">
       <div class="logo"><svg viewBox="0 0 64 64" aria-hidden="true"><path d="M8 44L23 29l10 9 21-24" fill="none" stroke="#00ff84" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/><circle cx="54" cy="14" r="5" fill="#00ff84"/></svg></div>
-      <div class="title"><h1>STOCK ARB SCANNER <span style="color:var(--green)">V1.3 FAST</span></h1><p>Robinhood Chain · USDG ↔ Stock Tokens · Read-only Shadow Mode</p></div>
+      <div class="title"><h1>FLASH LOAN <span style="color:var(--green)">ATOMIC ARB V2</span></h1><p>Robinhood Chain · Morpho flash loans · Uniswap V2/V3 execution</p></div>
     </div>
     <div class="live"><span id="liveDot" class="dot"></span><span id="liveText">OFFLINE</span></div>
   </div>
@@ -37,7 +37,7 @@
         <button class="btn" id="stopBtn" disabled>■ STOP</button>
         <button class="btn warn" id="deepBtn">DEEP SCAN TOP</button>
       </div>
-      <div class="notice"><b>What this version proves:</b> exact onchain quotes across Uniswap V2, direct USDG Stock-Token Uniswap V3 pools (0.01% / 0.05% / 0.30% / 1.00%), and discovered Uniswap V4 USDG pools. DEX fees and price impact are already inside the quote. V4 PoolKeys are discovered from a public index, but every V4 amount is re-quoted directly against the official onchain Uniswap V4 Quoter. Gas is a conservative estimate until the atomic executor exists. V1.3 FAST uses JSON-RPC batching, automatically caches live route topology, and only re-quotes venues that actually exist after discovery. The first scan is a topology scan; later Shadow scans are much smaller and faster. If the RPC rejects large batches, it automatically splits them into smaller batches instead of stalling.</div>
+      <div class="notice"><b>Scanner coverage:</b> exact onchain quotes across Uniswap V2, direct USDG Stock-Token Uniswap V3 pools (0.01% / 0.05% / 0.30% / 1.00%), and discovered Uniswap V4 USDG pools. DEX fees and price impact are already inside the quote. V4 PoolKeys are discovered from a public index, but every V4 amount is re-quoted directly against the official onchain Uniswap V4 Quoter. Scanner gas is provisional. The execution panel checks the complete atomic call and its full gas budget. The scanner uses JSON-RPC batching, automatically caches live route topology, and only re-quotes venues that actually exist after discovery. The first scan is a topology scan; later Shadow scans are much smaller and faster. If the RPC rejects large batches, it automatically splits them into smaller batches instead of stalling.</div>
     </section>
 
     <section class="panel p16">
@@ -58,7 +58,7 @@
 
   <div class="metrics">
     <div class="metric"><div class="k">Assets loaded</div><div class="v" id="mAssets">0</div><div class="s">official chain 4663</div></div>
-    <div class="metric"><div class="k">Routable now</div><div class="v" id="mRoutable">0</div><div class="s">≥2 successful venues</div></div>
+    <div class="metric"><div class="k">Route candidates</div><div class="v" id="mRoutable">0</div><div class="s">complete ordered route pairs</div></div>
     <div class="metric"><div class="k">Positive gross</div><div class="v yellow" id="mGross">0</div><div class="s">before gas + buffer</div></div>
     <div class="metric"><div class="k">Positive net</div><div class="v green" id="mNet">0</div><div class="s">conservative estimate</div></div>
     <div class="metric"><div class="k">Best net profit</div><div class="v green" id="mBest">$0.00</div><div class="s" id="mBestSym">—</div></div>
@@ -83,13 +83,48 @@
     <section class="panel p16"><h2>Deep-scan sizes</h2>
       <div class="field"><label>USDG sizes (comma separated)</label><input id="deepSizes" value="100,500,1000,5000,10000,25000,50000,100000" /></div>
       <div class="notice"><b>Recommended export:</b> let Shadow Mode collect multiple scans, run Deep Scan Top at least once, then click <b>FULL JSON FOR CHATGPT</b>. The JSON contains scan summaries + candidates + settings, which is much better for judging whether the opportunity is persistent or just a one-block illusion.</div>
-      <div class="notice">This tool never asks for a private key and never sends a transaction. Keep the tab open for browser-based Shadow Mode. For true 24/7 collection we can move the same scanner engine to a server/worker later.</div>
+      <div class="notice">Shadow Mode scans while this tab is open. The execution panel below can deploy your executor and send a flash loan transaction after a wallet signature. Keep ETH in your wallet for gas.</div>
     </section>
   </div>
 
-  <div class="footer"><span>Canonical USDG: 0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168 · Chain ID 4663</span><span>V1.3 FAST · batched RPC + live-route cache · quotes can disappear before execution</span></div>
+  <section class="panel p16" id="execution" style="margin-top:18px">
+    <h2>Atomic flash loan execution</h2>
+    <div class="notice"><b>Morpho → buy → sell → repay → owner profit.</b> Borrow USDG without funding the loan principal. Your wallet pays ETH gas. The contract enforces a minimum token profit; the preflight adds the estimated gas budget to your requested net profit. A reverted transaction still uses gas. V4 candidates remain scan-only in this build.</div>
+    <div class="statusbox" style="margin-top:12px">
+      <div class="statusline"><div class="a">Wallet / executor owner</div><div class="b" id="walletAccount">Not connected</div></div>
+      <div class="statusline"><div class="a">Morpho USDG available</div><div class="b" id="flashLiquidity">Not checked</div></div>
+      <div class="statusline"><div class="a">Liquidity checked at block</div><div class="b" id="flashBlock">—</div></div>
+      <div class="statusline"><div class="a">Atomic check</div><div class="b" id="executionStatus" role="status" aria-live="polite">Connect your wallet and check flash liquidity.</div></div>
+    </div>
+    <div class="btnrow">
+      <button class="btn" id="walletBtn">CONNECT WALLET</button>
+      <button class="btn" id="flashHealthBtn">CHECK FLASH LIQUIDITY</button>
+      <button class="btn primary" id="deployExecutorBtn">DEPLOY MY EXECUTOR</button>
+    </div>
+    <div class="field" style="margin-top:12px"><label for="executorAddress">Your executor contract</label><input id="executorAddress" autocomplete="off" spellcheck="false" placeholder="0x… or deploy with the button above" aria-label="Executor contract address" /></div>
+    <div class="btnrow"><button class="btn" id="attachExecutorBtn">VERIFY EXECUTOR</button></div>
+    <div class="controls" style="margin-top:16px">
+      <div class="field"><label for="executionRoute">Candidate route</label><select id="executionRoute" aria-label="Candidate route"><option value="">Run a scan to load candidate routes</option></select></div>
+      <div class="field"><label for="executionMinProfit">Minimum net (USDG)</label><input id="executionMinProfit" aria-label="Minimum net profit" type="number" min="0.000001" step="0.01" value="1" /></div>
+      <div class="field"><label for="executionSlippage">Slippage / hop (bps)</label><input id="executionSlippage" aria-label="Slippage basis points" type="number" min="0" max="100" step="1" value="10" /></div>
+      <div class="field"><label for="executionMaxGas">Max gas budget (ETH)</label><input id="executionMaxGas" aria-label="Maximum ETH gas budget" type="number" min="0.00000001" max="1" step="0.00001" value="0.0002" /></div>
+    </div>
+    <div class="btnrow">
+      <button class="btn" id="preflightBtn">CHECK ATOMIC ROUTE</button>
+      <button class="btn primary" id="sendArbBtn" disabled>EXECUTE FLASH LOAN</button>
+    </div>
+    <div class="statusbox" style="margin-top:12px">
+      <div class="statusline"><div class="a">Net estimate after gas budget</div><div class="b" id="atomicProfit">—</div></div>
+      <div class="statusline"><div class="a">Full transaction gas budget</div><div class="b" id="atomicGas">—</div></div>
+    </div>
+    <div id="executionTx" style="margin-top:12px;overflow-wrap:anywhere"></div>
+    <div id="executionLog" class="log" style="margin-top:12px" role="log" aria-label="Execution activity"></div>
+    <div class="notice">Addresses from <a href="https://docs.morpho.org/developers/contracts/addresses/" target="_blank" rel="noopener" style="color:var(--blue)">Morpho</a> and <a href="https://github.com/Uniswap/contracts/blob/main/deployments/4663.md" target="_blank" rel="noopener" style="color:var(--blue)">Uniswap</a>. Contract source: <a href="https://github.com/deadpixelslabs/flashloan" target="_blank" rel="noopener" style="color:var(--blue)">GitHub</a>. Live liquidity and profitable routes must pass the onchain checks above.</div>
+  </section>
+
+  <div class="footer"><span>Canonical USDG: 0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168 · Chain ID 4663</span><span>V2 · Morpho atomic executor · quotes can change before inclusion</span></div>
 </div>
-<script src="https://cdn.jsdelivr.net/npm/ethers@6.13.4/dist/ethers.umd.min.js"></script>
+<script src="/vendor/ethers-6.13.4.min.js"></script>
 <script>
 (() => {
 'use strict';
@@ -120,7 +155,7 @@ const v4Iface = new ethers.Interface(['function quoteExactInputSingle(((address 
 const erc20Iface = new ethers.Interface(['function decimals() view returns (uint8)']);
 
 function fmt(n,d=2){ if(n===null||n===undefined||Number.isNaN(Number(n))) return '—'; return Number(n).toLocaleString(undefined,{maximumFractionDigits:d,minimumFractionDigits:d}); }
-function money(n){ const x=Number(n||0); const sign=x<0?'-$':'$'; return sign+Math.abs(x).toLocaleString(undefined,{maximumFractionDigits:2,minimumFractionDigits:2}); }
+function money(n){ if(n===null||n===undefined||!Number.isFinite(Number(n)))return '—'; const x=Number(n); const sign=x<0?'-$':'$'; return sign+Math.abs(x).toLocaleString(undefined,{maximumFractionDigits:2,minimumFractionDigits:2}); }
 function pct(n,d=3){ if(n===null||n===undefined||Number.isNaN(Number(n))) return '—'; return (Number(n)>=0?'+':'')+Number(n).toFixed(d)+'%'; }
 function nowIso(){ return new Date().toISOString(); }
 function escapeHtml(s){ return String(s??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c])); }
@@ -130,7 +165,7 @@ function sleep(ms){return new Promise(r=>setTimeout(r,ms));}
 function chunks(arr,n){const out=[];for(let i=0;i<arr.length;i+=n)out.push(arr.slice(i,i+n));return out;}
 function bigintToNum(v,dec){return Number(ethers.formatUnits(v,dec));}
 function venueLabel(key){ if(String(key).startsWith('V4:')) return 'Uni V4 '+String(key).slice(3,11); return VENUES.find(v=>v.key===key)?.label || key; }
-function statusFor(r){ if(r.netProfit>5 && r.netRoi>0.10 && r.score>=70) return ['STRONG','strong']; if(r.netProfit>0) return ['EXECUTABLE?','real']; if(r.grossProfit>0 || r.netRoi>-0.05) return ['WATCH','watch']; return ['NO ARB','no']; }
+function statusFor(r){ if(!Number.isFinite(r.netProfit))return ['GAS UNKNOWN','no']; if(r.netProfit>5 && r.netRoi>0.10 && r.score>=70)return ['CANDIDATE','strong']; if(r.netProfit>0)return ['CHECK ATOMIC','real']; if(r.grossProfit>0 || r.netRoi>-0.05)return ['WATCH','watch']; return ['NO ARB','no']; }
 
 async function fetchJSON(primaryUrl,directUrl,label){
   const urls=[primaryUrl,directUrl].filter(Boolean); let lastErr=null;
@@ -158,15 +193,63 @@ function idbAll(storeName){ return new Promise((resolve,reject)=>{ const tx=stat
 function idbCount(storeName){ return new Promise((resolve,reject)=>{ const tx=state.db.transaction(storeName,'readonly'); const r=tx.objectStore(storeName).count(); r.onsuccess=()=>resolve(r.result||0); r.onerror=()=>reject(r.error); }); }
 function idbClear(){ return new Promise((resolve,reject)=>{ const tx=state.db.transaction(['rows','summaries'],'readwrite'); tx.objectStore('rows').clear(); tx.objectStore('summaries').clear(); tx.oncomplete=resolve; tx.onerror=()=>reject(tx.error); }); }
 
+function resolvedRpcEndpoint(){
+  const configured=els('rpc').value.trim().replace(/\/$/,'');
+  if(!configured) throw new Error('RPC URL is empty');
+  const endpoint=configured==='https://rpc.mainnet.chain.robinhood.com' ? new URL('/proxy/rpc',window.location.href).href : configured;
+  const parsed=new URL(endpoint); if(!['https:','http:'].includes(parsed.protocol)) throw new Error('RPC must use HTTP or HTTPS');
+  return parsed.href;
+}
+function assetKey(asset){ return asset.address.toLowerCase(); }
+function rpcError(message,extra={}){ return Object.assign(new Error(message),{rpcInfrastructure:true,...extra}); }
+function isQuoteRevert(error){
+  const nested=error?.info?.error||error?.error||error;
+  return nested?.code===3 || error?.code==='CALL_EXCEPTION' || /execution reverted|vm exception.*revert/i.test(String(nested?.message||error?.message||''));
+}
+function sortNetRows(a,b){
+  const av=Number.isFinite(a.netProfit)?a.netProfit:-Infinity,bv=Number.isFinite(b.netProfit)?b.netProfit:-Infinity;
+  return av===bv?b.grossProfit-a.grossProfit:bv-av;
+}
 async function initProvider(){
-  const url=els('rpc').value.trim(); if(!url) throw new Error('RPC URL is empty');
-  state.provider=new ethers.JsonRpcProvider(url,CHAIN_ID,{staticNetwork:true});
-  const chainHex=await state.provider.send('eth_chainId',[]); const cid=parseInt(chainHex,16); if(cid!==CHAIN_ID) throw new Error('Wrong chain ID: '+cid+' (expected 4663)');
-  const block=await state.provider.getBlockNumber();
-  const decData=erc20Iface.encodeFunctionData('decimals',[]); const decRet=await state.provider.call({to:USDG,data:decData}); state.usdgDecimals=Number(erc20Iface.decodeFunctionResult('decimals',decRet)[0]);
-  await refreshGas(block);
-  els('chainStatus').textContent='Chain '+cid+' · block '+block.toLocaleString(); setLive(true,'CHAIN 4663');
+  const endpoint=resolvedRpcEndpoint();
+  if(!state.provider || state.providerEndpoint!==endpoint){
+    if(state.provider) state.provider.destroy();
+    state.provider=null; state.providerEndpoint=endpoint; state.ethUsd=null; state.gasPriceWei=null;
+    state.decimalsCache=new Map(); state.routeCache.clear();
+    const next=new ethers.JsonRpcProvider(endpoint,CHAIN_ID,{staticNetwork:true,batchMaxCount:1,cacheTimeout:0});
+    try{ const cid=Number(BigInt(await next.send('eth_chainId',[]))); if(cid!==CHAIN_ID) throw new Error('Wrong chain ID: '+cid+' (expected '+CHAIN_ID+')'); }
+    catch(e){next.destroy();throw e;}
+    state.provider=next;
+  }
+  const cid=Number(BigInt(await state.provider.send('eth_chainId',[])));
+  if(cid!==CHAIN_ID){state.provider.destroy();state.provider=null;throw new Error('RPC chain changed: '+cid+' (expected '+CHAIN_ID+')');}
+  const block=Number(BigInt(await state.provider.send('eth_blockNumber',[])));
+  if(!state.decimalsCache) state.decimalsCache=new Map();
+  if(!state.decimalsCache.has(USDG.toLowerCase())){
+    const ret=await state.provider.send('eth_call',[{to:USDG,data:erc20Iface.encodeFunctionData('decimals',[])},ethers.toQuantity(block)]);
+    const decimals=Number(erc20Iface.decodeFunctionResult('decimals',ret)[0]);
+    if(!Number.isInteger(decimals)||decimals<0||decimals>36) throw new Error('USDG decimals are invalid');
+    state.decimalsCache.set(USDG.toLowerCase(),decimals);
+  }
+  state.usdgDecimals=state.decimalsCache.get(USDG.toLowerCase());
+  els('chainStatus').textContent='Chain '+cid+' · block '+block.toLocaleString(); setLive(true,'CHAIN '+cid);
   return block;
+}
+async function loadTokenDecimals(assets,block){
+  if(!state.decimalsCache) state.decimalsCache=new Map();
+  const missing=assets.filter(a=>!state.decimalsCache.has(a.address.toLowerCase()));
+  if(missing.length){
+    const calls=missing.map(a=>({target:a.address,callData:erc20Iface.encodeFunctionData('decimals',[]),meta:{symbol:a.symbol,address:a.address,type:'decimals'}}));
+    const results=await rpcCallRaw(calls,block,'TOKEN DECIMALS');
+    for(const result of results){
+      if(!result.success) continue;
+      try{const decimals=Number(erc20Iface.decodeFunctionResult('decimals',result.returnData)[0]);if(Number.isInteger(decimals)&&decimals>=0&&decimals<=36) state.decimalsCache.set(result.meta.address.toLowerCase(),decimals);}catch(_e){}
+    }
+  }
+  for(const asset of assets){asset.decimals=state.decimalsCache.get(asset.address.toLowerCase());asset.decimalsVerified=Number.isInteger(asset.decimals);}
+  const verified=assets.filter(a=>a.decimalsVerified);
+  if(verified.length!==assets.length) log((assets.length-verified.length)+' tokens skipped: onchain decimals unavailable.','err');
+  return verified;
 }
 
 async function loadV4Pools(){
@@ -193,7 +276,7 @@ async function loadV4Pools(){
     const other=c0===usdg?c1:c0; const asset=assetByAddress.get(other); if(!asset) continue;
     const rec={poolId:p.poolId,currency0:p.currency0,currency1:p.currency1,fee:Number(p.fee),feeDynamic:!!p.feeDynamic,feePct:p.feePct,tickSpacing:Number(p.tickSpacing),hooks:p.hooks||ethers.ZeroAddress,depthUsd:Number(p.depthUsd||0),stateCurrent:p.stateCurrent!==false,lastSwapAt:p.lastSwapAt||null};
     if(!Number.isFinite(rec.fee)||!Number.isFinite(rec.tickSpacing)) continue;
-    if(!bySymbol.has(asset.symbol)) bySymbol.set(asset.symbol,[]); bySymbol.get(asset.symbol).push(rec);
+    if(!bySymbol.has(assetKey(asset))) bySymbol.set(assetKey(asset),[]); bySymbol.get(assetKey(asset)).push(rec);
   }
   // Keep the two deepest direct USDG V4 pools per stock. This bounds RPC load while still allowing V4↔V4 arb.
   for(const [sym,arr] of bySymbol) arr.sort((a,b)=>(b.depthUsd||0)-(a.depthUsd||0)), bySymbol.set(sym,arr.slice(0,2));
@@ -204,60 +287,69 @@ async function loadV4Pools(){
 async function loadAssets(){
   disableBusy(true,'Loading official registry…');
   try{
-    await initProvider();
+    const block=await initProvider();
     let raw;
     try{ raw=await fetchJSON(ASSET_API,ASSET_API_DIRECT,'Official asset registry'); localStorage.setItem('rh-assets-cache',JSON.stringify(raw)); }
     catch(e){ const cache=localStorage.getItem('rh-assets-cache'); if(!cache) throw new Error('Official asset registry failed and no cache exists: '+e.message+' — deploy V1.3 together with vercel.json.'); raw=JSON.parse(cache); log('Official asset API unavailable; using cached registry.','err'); }
     const list=(raw.assets||[]).map(a=>{const dep=(a.deployments||[]).find(d=>Number(d.chainId)===CHAIN_ID); return dep?{symbol:a.tokenSymbol,name:a.tokenName,address:dep.contractAddress,multiplier:Number(a.currentMultiplier||1),status:a.status,logoUrl:a.logoUrl||'',tradingCapabilities:a.tradingCapabilities||{}}:null;}).filter(Boolean).filter(a=>!a.status||a.status==='ASSET_STATUS_ACTIVE');
-    state.assets=list; els('mAssets').textContent=list.length;
+    state.assets=await loadTokenDecimals(list,block); els('mAssets').textContent=state.assets.length;
     restoreLiveRoutes();
     await loadV4Pools();
-    els('assetStatus').textContent=list.length+' active · '+state.v4PoolCount+' V4 PoolKeys'; log('Loaded '+list.length+' official Stock Tokens.','ok');
+    els('assetStatus').textContent=state.assets.length+' active · '+state.v4PoolCount+' V4 PoolKeys'; log('Loaded '+state.assets.length+' verified Stock Tokens.','ok');
   }catch(e){ log(e.message,'err'); els('assetStatus').textContent='Load failed · see log'; setLive(false,'ERROR'); }
   finally{disableBusy(false);}
 }
 
 async function rpcBatchPost(items,blockTag,idBase=1){
   const tag=ethers.toQuantity(blockTag);
-  const configured=els('rpc').value.trim();
-  const official='https://rpc.mainnet.chain.robinhood.com';
-  const url=configured.replace(/\/$/,'')===official ? '/proxy/rpc' : configured;
+  if(resolvedRpcEndpoint()!==state.providerEndpoint) throw rpcError('RPC configuration changed during scan; run the scan again');
   const payload=items.map((x,i)=>({jsonrpc:'2.0',id:idBase+i,method:'eth_call',params:[{to:x.target,data:x.callData},tag]}));
   const controller=new AbortController(); const timer=setTimeout(()=>controller.abort(),10000);
   try{
-    const r=await fetch(url,{method:'POST',headers:{'content-type':'application/json','accept':'application/json'},body:JSON.stringify(payload),signal:controller.signal,cache:'no-store'});
-    if(!r.ok) throw new Error('RPC HTTP '+r.status);
-    const j=await r.json();
-    if(!Array.isArray(j)) throw new Error('RPC batch response is not an array');
-    const byId=new Map(j.map(x=>[Number(x.id),x]));
-    return items.map((x,i)=>{ const rec=byId.get(idBase+i); return rec&&typeof rec.result==='string' ? {success:true,returnData:rec.result,meta:x.meta} : {success:false,returnData:'0x',meta:x.meta}; });
-  } finally { clearTimeout(timer); }
-}
-
-async function rpcSingle(x,blockTag){
-  try{
-    const tag=ethers.toQuantity(blockTag);
-    const p=state.provider.send('eth_call',[{to:x.target,data:x.callData},tag]);
-    const timeout=new Promise((_,rej)=>setTimeout(()=>rej(new Error('eth_call timeout')),8000));
-    const r=await Promise.race([p,timeout]);
-    return {success:true,returnData:r,meta:x.meta};
-  }catch(_e){ return {success:false,returnData:'0x',meta:x.meta}; }
-}
-
-async function rpcBatchWithFallback(items,blockTag,idBase){
-  try{
-    const r=await rpcBatchPost(items,blockTag,idBase);
-    state.rpcBatchSupported=true;
-    return r;
+    const response=await fetch(state.providerEndpoint,{method:'POST',headers:{'content-type':'application/json','accept':'application/json'},body:JSON.stringify(payload),signal:controller.signal,cache:'no-store'});
+    if(!response.ok) throw rpcError('RPC HTTP '+response.status,{batchLimit:response.status===413});
+    let records;
+    try{records=await response.json();}catch(_e){throw rpcError('RPC returned non-JSON data; check the same-origin proxy and endpoint');}
+    if(!Array.isArray(records)){
+      const reason=records?.error?.message||'response is not an array';
+      throw rpcError('RPC batch rejected: '+reason,{batchLimit:/batch|invalid request|too many|limit.*request/i.test(reason)||records?.error?.code===-32600});
+    }
+    const byId=new Map(records.map(x=>[Number(x.id),x]));
+    return items.map((item,i)=>{
+      const rec=byId.get(idBase+i);
+      if(!rec) throw rpcError('RPC batch omitted response '+(idBase+i));
+      if(typeof rec.result==='string') return {success:true,returnData:rec.result,meta:item.meta};
+      if(isQuoteRevert(rec.error)) return {success:false,returnData:'0x',meta:item.meta,error:rec.error?.message||'Quote reverted'};
+      throw rpcError('RPC quote infrastructure error: '+(rec.error?.message||'missing result'),{batchLimit:/batch.*limit|too many.*request/i.test(rec.error?.message||'')});
+    });
   }catch(e){
-    if(items.length<=1){ state.rpcBatchSupported=false; return [await rpcSingle(items[0],blockTag)]; }
-    // Some RPC gateways cap batch size. Split recursively; only fall to singles for the tiny failing leaf.
+    if(e.name==='AbortError') throw rpcError('RPC batch timed out after 10 seconds');
+    if(e.rpcInfrastructure) throw e;
+    throw rpcError('RPC request failed: '+e.message);
+  }finally{clearTimeout(timer);}
+}
+async function rpcSingle(item,blockTag){
+  let timer;
+  try{
+    const request=state.provider.send('eth_call',[{to:item.target,data:item.callData},ethers.toQuantity(blockTag)]);
+    const timeout=new Promise((_,reject)=>{timer=setTimeout(()=>reject(rpcError('eth_call timed out after 8 seconds')),8000);});
+    const result=await Promise.race([request,timeout]);
+    return {success:true,returnData:result,meta:item.meta};
+  }catch(e){
+    if(isQuoteRevert(e)) return {success:false,returnData:'0x',meta:item.meta,error:e.shortMessage||e.message};
+    throw rpcError('RPC single call failed: '+(e.shortMessage||e.message));
+  }finally{clearTimeout(timer);}
+}
+async function rpcBatchWithFallback(items,blockTag,idBase){
+  try{const result=await rpcBatchPost(items,blockTag,idBase);state.rpcBatchSupported=true;return result;}
+  catch(e){
+    if(!e.batchLimit) throw e;
+    if(items.length<=1){state.rpcBatchSupported=false;return [await rpcSingle(items[0],blockTag)];}
     const mid=Math.ceil(items.length/2);
-    const [a,b]=await Promise.all([
-      rpcBatchWithFallback(items.slice(0,mid),blockTag,idBase),
-      rpcBatchWithFallback(items.slice(mid),blockTag,idBase+mid)
-    ]);
-    return a.concat(b);
+    // Split only explicit batch-limit failures, sequentially to keep the outer worker concurrency bounded.
+    const first=await rpcBatchWithFallback(items.slice(0,mid),blockTag,idBase);
+    const second=await rpcBatchWithFallback(items.slice(mid),blockTag,idBase+mid);
+    return first.concat(second);
   }
 }
 
@@ -284,21 +376,21 @@ function buildQuoteCalls(assets,amountRaw,direction,buyAmountsBySymbol,routeFilt
   const calls=[];
   for(const a of assets){
     const inToken=direction==='buy'?USDG:a.address; const outToken=direction==='buy'?a.address:USDG;
-    const amt=direction==='buy'?amountRaw:buyAmountsBySymbol?.get(a.symbol);
+    const amt=direction==='buy'?amountRaw:buyAmountsBySymbol?.get(assetKey(a));
     if(!amt||amt<=0n) continue;
-    const allowed=routeFilter?.get(a.symbol)||null;
+    const allowed=routeFilter?.get(assetKey(a))||null;
     for(const v of VENUES){
       if(allowed && !allowed.has(v.key)) continue;
-      if(v.type==='v2') calls.push({target:V2_ROUTER,callData:v2Iface.encodeFunctionData('getAmountsOut',[amt,[inToken,outToken]]),meta:{symbol:a.symbol,venue:v.key,label:v.label,type:'v2',direction,amountIn:amt}});
-      else calls.push({target:V3_QUOTER,callData:v3Iface.encodeFunctionData('quoteExactInputSingle',[[inToken,outToken,amt,v.fee,0]]),meta:{symbol:a.symbol,venue:v.key,label:v.label,type:'v3',fee:v.fee,direction,amountIn:amt}});
+      if(v.type==='v2') calls.push({target:V2_ROUTER,callData:v2Iface.encodeFunctionData('getAmountsOut',[amt,[inToken,outToken]]),meta:{symbol:a.symbol,assetKey:assetKey(a),address:a.address,venue:v.key,label:v.label,type:'v2',direction,amountIn:amt}});
+      else calls.push({target:V3_QUOTER,callData:v3Iface.encodeFunctionData('quoteExactInputSingle',[[inToken,outToken,amt,v.fee,0]]),meta:{symbol:a.symbol,assetKey:assetKey(a),address:a.address,venue:v.key,label:v.label,type:'v3',fee:v.fee,direction,amountIn:amt}});
     }
-    for(const p of (state.v4Pools.get(a.symbol)||[])){
+    for(const p of (state.v4Pools.get(assetKey(a))||[])){
       const key='V4:'+p.poolId; if(allowed && !allowed.has(key)) continue;
       const c0=String(p.currency0).toLowerCase(), inLower=inToken.toLowerCase();
       if(inLower!==c0 && inLower!==String(p.currency1).toLowerCase()) continue;
       const zeroForOne=inLower===c0; const poolKey=[p.currency0,p.currency1,p.fee,p.tickSpacing,p.hooks];
       const feeLabel=p.feeDynamic?'dynamic':((Number(p.feePct??p.fee/10000)).toFixed(2)+'%');
-      try{ calls.push({target:V4_QUOTER,callData:v4Iface.encodeFunctionData('quoteExactInputSingle',[[poolKey,zeroForOne,amt,'0x']]),meta:{symbol:a.symbol,venue:key,label:'Uni V4 '+feeLabel+' '+String(p.poolId).slice(2,8),type:'v4',fee:p.fee,poolId:p.poolId,depthUsd:p.depthUsd,direction,amountIn:amt}}); }catch(_e){}
+      try{ calls.push({target:V4_QUOTER,callData:v4Iface.encodeFunctionData('quoteExactInputSingle',[[poolKey,zeroForOne,amt,'0x']]),meta:{symbol:a.symbol,assetKey:assetKey(a),address:a.address,venue:key,label:'Uni V4 '+feeLabel+' '+String(p.poolId).slice(2,8),type:'v4',fee:p.fee,poolId:p.poolId,depthUsd:p.depthUsd,direction,amountIn:amt}}); }catch(_e){}
     }
   }
   return calls;
@@ -311,32 +403,39 @@ function rememberLiveRoutes(buyMap){
   }
   try{
     const obj={}; for(const [sym,set] of state.routeCache)obj[sym]=[...set];
-    localStorage.setItem('rh-live-route-cache-v13',JSON.stringify(obj));
+    localStorage.setItem('rh-live-route-cache-v14',JSON.stringify(obj));
   }catch(_e){}
 }
 
 function restoreLiveRoutes(){
   try{
-    const raw=localStorage.getItem('rh-live-route-cache-v13'); if(!raw)return;
+    const raw=localStorage.getItem('rh-live-route-cache-v14'); if(!raw)return;
     const obj=JSON.parse(raw); state.routeCache=new Map(Object.entries(obj).map(([k,v])=>[k,new Set(v)]));
     if(state.routeCache.size) log('Restored live-route cache for '+state.routeCache.size+' Stock Tokens.','ok');
   }catch(_e){}
 }
 
-function buildSellCallsFromBuyMap(assets,buyMap,bestBuyAmt,bestBuyMeta){
+function buildSellCallsFromBuyMap(assets,buyMap){
   const calls=[];
-  for(const a of assets){
-    const amt=bestBuyAmt.get(a.symbol), best=bestBuyMeta.get(a.symbol); if(!amt||!best)continue;
-    const live=(buyMap.get(a.symbol)||[]).filter(q=>q.venue!==best.venue);
-    if(!live.length)continue;
-    for(const q of live){
-      if(q.type==='v2') calls.push({target:V2_ROUTER,callData:v2Iface.encodeFunctionData('getAmountsOut',[amt,[a.address,USDG]]),meta:{...q,direction:'sell',amountIn:amt}});
-      else if(q.type==='v3') calls.push({target:V3_QUOTER,callData:v3Iface.encodeFunctionData('quoteExactInputSingle',[[a.address,USDG,amt,q.fee,0]]),meta:{...q,direction:'sell',amountIn:amt}});
-      else if(q.type==='v4'){
-        const p=(state.v4Pools.get(a.symbol)||[]).find(x=>'V4:'+x.poolId===q.venue); if(!p)continue;
-        const inLower=a.address.toLowerCase(),c0=String(p.currency0).toLowerCase(); const zeroForOne=inLower===c0;
-        const poolKey=[p.currency0,p.currency1,p.fee,p.tickSpacing,p.hooks];
-        try{calls.push({target:V4_QUOTER,callData:v4Iface.encodeFunctionData('quoteExactInputSingle',[[poolKey,zeroForOne,amt,'0x']]),meta:{...q,direction:'sell',amountIn:amt}});}catch(_e){}
+  for(const asset of assets){
+    const live=buyMap.get(assetKey(asset))||[];
+    for(const buy of live){
+      const amount=buy.amountOut;
+      if(!amount||amount<=0n) continue;
+      for(const sell of live){
+        if(sell.venue===buy.venue) continue;
+        const meta={...sell,direction:'sell',amountIn:amount,sourceBuyVenue:buy.venue,sourceBuyAmountRaw:amount.toString()};
+        if(sell.type==='v2'){
+          calls.push({target:V2_ROUTER,callData:v2Iface.encodeFunctionData('getAmountsOut',[amount,[asset.address,USDG]]),meta});
+        }else if(sell.type==='v3'){
+          calls.push({target:V3_QUOTER,callData:v3Iface.encodeFunctionData('quoteExactInputSingle',[[asset.address,USDG,amount,sell.fee,0]]),meta});
+        }else if(sell.type==='v4'){
+          const pool=(state.v4Pools.get(assetKey(asset))||[]).find(p=>'V4:'+p.poolId===sell.venue);
+          if(!pool) continue;
+          const key=[pool.currency0,pool.currency1,pool.fee,pool.tickSpacing,pool.hooks];
+          const zeroForOne=asset.address.toLowerCase()===String(pool.currency0).toLowerCase();
+          try{calls.push({target:V4_QUOTER,callData:v4Iface.encodeFunctionData('quoteExactInputSingle',[[key,zeroForOne,amount,'0x']]),meta});}catch(_e){}
+        }
       }
     }
   }
@@ -349,7 +448,7 @@ function decodeQuotes(results){
       if(r.meta.type==='v2'){ const d=v2Iface.decodeFunctionResult('getAmountsOut',r.returnData); const arr=d[0]; amountOut=arr[arr.length-1]; gasEstimate=125000n; }
       else if(r.meta.type==='v3'){ const d=v3Iface.decodeFunctionResult('quoteExactInputSingle',r.returnData); amountOut=d[0]; gasEstimate=d[3]; if(gasEstimate<110000n) gasEstimate=110000n; }
       else { const d=v4Iface.decodeFunctionResult('quoteExactInputSingle',r.returnData); amountOut=d[0]; gasEstimate=d[1]; if(gasEstimate<140000n) gasEstimate=140000n; }
-      if(amountOut<=0n) continue; const k=r.meta.symbol; if(!map.has(k))map.set(k,[]); map.get(k).push({...r.meta,amountOut,gasEstimate});
+      if(amountOut<=0n) continue; const k=r.meta.assetKey||r.meta.symbol; if(!map.has(k))map.set(k,[]); map.get(k).push({...r.meta,amountOut,gasEstimate});
     }catch(_e){}
   }
   return map;
@@ -362,14 +461,23 @@ function logVenueHits(label,map){
 }
 
 async function refreshGas(blockTag){
-  try{ const gp=await state.provider.send('eth_gasPrice',[]); state.gasPriceWei=BigInt(gp); }catch(_){state.gasPriceWei=100000000n;}
+  state.gasPriceWei=null; state.ethUsd=null; state.ethUsdQuoteBlock=null;
   try{
-    const amt=ethers.parseUnits('0.1',18); const dummy=[{symbol:'WETH',address:WETH}]; const calls=buildQuoteCalls(dummy,amt,'buy'); // wrong token pair for dummy; override below
-    calls.length=0;
-    for(const v of VENUES){ if(v.type==='v2') calls.push({target:V2_ROUTER,callData:v2Iface.encodeFunctionData('getAmountsOut',[amt,[WETH,USDG]]),meta:{symbol:'WETH',venue:v.key,type:'v2'}}); else calls.push({target:V3_QUOTER,callData:v3Iface.encodeFunctionData('quoteExactInputSingle',[[WETH,USDG,amt,v.fee,0]]),meta:{symbol:'WETH',venue:v.key,type:'v3'}}); }
-    const res=decodeQuotes(await rpcCallRaw(calls,blockTag,'GAS REF')).get('WETH')||[]; const best=res.sort((a,b)=>a.amountOut>b.amountOut?-1:1)[0]; if(best) state.ethUsd=bigintToNum(best.amountOut,state.usdgDecimals)/0.1;
-  }catch(_e){}
-  els('gasStatus').textContent=(Number(state.gasPriceWei)/1e9).toFixed(4)+' gwei · ETH ≈ '+(state.ethUsd?money(state.ethUsd):'unknown');
+    const price=BigInt(await state.provider.send('eth_gasPrice',[]));
+    if(price>0n) state.gasPriceWei=price;
+  }catch(e){log('Gas price unavailable; net profit and execution are blocked.','err');}
+  try{
+    const amount=ethers.parseUnits('0.1',18),calls=[];
+    for(const venue of VENUES){
+      if(venue.type==='v2') calls.push({target:V2_ROUTER,callData:v2Iface.encodeFunctionData('getAmountsOut',[amount,[WETH,USDG]]),meta:{symbol:'WETH',venue:venue.key,type:'v2'}});
+      else calls.push({target:V3_QUOTER,callData:v3Iface.encodeFunctionData('quoteExactInputSingle',[[WETH,USDG,amount,venue.fee,0]]),meta:{symbol:'WETH',venue:venue.key,type:'v3'}});
+    }
+    const quotes=decodeQuotes(await rpcCallRaw(calls,blockTag,'GAS REF')).get('WETH')||[];
+    const best=quotes.sort((a,b)=>a.amountOut>b.amountOut?-1:1)[0];
+    if(best){const price=bigintToNum(best.amountOut,state.usdgDecimals)/0.1;if(Number.isFinite(price)&&price>0){state.ethUsd=price;state.ethUsdQuoteBlock=blockTag;}}
+  }catch(e){log('ETH/USDG gas reference unavailable: '+e.message,'err');}
+  const gasLabel=state.gasPriceWei===null?'unknown gas price':(Number(state.gasPriceWei)/1e9).toFixed(4)+' gwei';
+  els('gasStatus').textContent=gasLabel+' · ETH ≈ '+(Number.isFinite(state.ethUsd)?money(state.ethUsd)+' USDG':'unknown · net unavailable');
 }
 
 async function fetchReference(row,asset){
@@ -378,6 +486,7 @@ async function fetchReference(row,asset){
 }
 
 function scoreRow(r,venueCount){
+  if(!Number.isFinite(r.netProfit)||!Number.isFinite(r.netRoi)) return 0;
   const roiPts=Math.max(0,Math.min(30,(r.netRoi/0.25)*30));
   const pnlPts=Math.max(0,Math.min(25,(r.netProfit/25)*25));
   const venuePts=Math.min(15,Math.max(0,(venueCount-1)*4));
@@ -386,9 +495,22 @@ function scoreRow(r,venueCount){
   return Math.round(Math.max(0,Math.min(100,roiPts+pnlPts+venuePts+streakPts+refPts)));
 }
 
+function routeMetadata(quote,asset,direction){
+  const record={type:quote.type,venue:quote.venue,fee:quote.fee??null,tokenIn:direction==='buy'?USDG:asset.address,tokenOut:direction==='buy'?asset.address:USDG};
+  if(quote.type==='v4'){
+    const pool=(state.v4Pools.get(assetKey(asset))||[]).find(p=>'V4:'+p.poolId===quote.venue);
+    record.poolId=quote.poolId;
+    if(pool) record.poolKey={currency0:pool.currency0,currency1:pool.currency1,fee:pool.fee,tickSpacing:pool.tickSpacing,hooks:pool.hooks};
+    record.executionSupported=false;
+  }
+  return record;
+}
 async function scanAtSize(assets,size,scanType='quick',save=true,render=true){
-  if(!state.provider) await initProvider();
-  const block=await state.provider.getBlockNumber(); await refreshGas(block);
+  const block=await initProvider();
+  assets=await loadTokenDecimals(assets,block);
+  await refreshGas(block);
+  const sourceBlock=await state.provider.send('eth_getBlockByNumber',[ethers.toQuantity(block),false]);
+  if(!sourceBlock?.hash) throw new Error('Quote source block is unavailable');
   const amountRaw=ethers.parseUnits(String(size),state.usdgDecimals);
   log(scanType.toUpperCase()+': '+assets.length+' tokens @ '+money(size)+' · block '+block.toLocaleString());
   const forceDiscovery=scanType!=='quick' || state.routeCache.size===0 || (state.quickScanCount%20===0);
@@ -398,38 +520,42 @@ async function scanAtSize(assets,size,scanType='quick',save=true,render=true){
   const buyCalls=buildQuoteCalls(assets,amountRaw,'buy',null,routeFilter);
   const buyRaw=await rpcCallRaw(buyCalls,block,'BUY');
   const buyMap=decodeQuotes(buyRaw); logVenueHits('BUY',buyMap); rememberLiveRoutes(buyMap);
-  const bestBuyAmt=new Map(); const bestBuyMeta=new Map();
-  for(const a of assets){ const qs=(buyMap.get(a.symbol)||[]).sort((x,y)=>x.amountOut>y.amountOut?-1:1); if(qs.length){bestBuyAmt.set(a.symbol,qs[0].amountOut);bestBuyMeta.set(a.symbol,qs[0]);} }
-  const sellCalls=buildSellCallsFromBuyMap(assets,buyMap,bestBuyAmt,bestBuyMeta);
+  const sellCalls=buildSellCallsFromBuyMap(assets,buyMap);
+  log('SELL: quoting '+sellCalls.length+' ordered buy/sell venue pairs.','dim');
   const sellRaw=await rpcCallRaw(sellCalls,block,'SELL');
   const sellMap=decodeQuotes(sellRaw); logVenueHits('SELL',sellMap);
   const rows=[]; const scanGroupId=scanType.toUpperCase()+'-'+Date.now()+'-'+(++state.scanSeq);
   for(const a of assets){
-    const buy=bestBuyMeta.get(a.symbol); if(!buy)continue; const sells=(sellMap.get(a.symbol)||[]).filter(x=>x.venue!==buy.venue).sort((x,y)=>x.amountOut>y.amountOut?-1:1); if(!sells.length)continue; const sell=sells[0];
+    const buys=new Map((buyMap.get(assetKey(a))||[]).map(quote=>[quote.venue,quote]));
+    for(const sell of (sellMap.get(assetKey(a))||[])){
+      const buy=buys.get(sell.sourceBuyVenue);
+      if(!buy||buy.venue===sell.venue||sell.sourceBuyAmountRaw!==buy.amountOut.toString()) continue;
     const sellOut=bigintToNum(sell.amountOut,state.usdgDecimals); const grossProfit=sellOut-Number(size); const grossPct=grossProfit/Number(size)*100;
-    const overhead=BigInt(Math.max(0,Number(els('overheadGas').value)||220000)); const totalGas=buy.gasEstimate+sell.gasEstimate+overhead; const gasEth=Number(totalGas*state.gasPriceWei)/1e18; const gasUsd=state.ethUsd?gasEth*state.ethUsd:0;
-    const bufferBps=Math.max(0,Number(els('bufferBps').value)||0); const bufferUsd=Number(size)*bufferBps/10000; const netProfit=grossProfit-gasUsd-bufferUsd; const netRoi=netProfit/Number(size)*100;
-    const streakKey=a.symbol+'|'+buy.venue+'|'+sell.venue; let streak=state.streaks.get(streakKey)||0; streak=netProfit>0?streak+1:0; state.streaks.set(streakKey,streak);
-    const availableVenues=(buyMap.get(a.symbol)||[]).length;
-    const row={schemaVersion:1,timestamp:nowIso(),scanId:scanGroupId,scanType,chainId:CHAIN_ID,block,symbol:a.symbol,name:a.name,address:a.address,size:Number(size),buyVenue:buy.venue,buyVenueLabel:buy.label||venueLabel(buy.venue),sellVenue:sell.venue,sellVenueLabel:sell.label||venueLabel(sell.venue),buyTokenQty:bigintToNum(buy.amountOut,18),sellOutUsdg:sellOut,grossProfit,grossPct,gasPriceGwei:Number(state.gasPriceWei)/1e9,ethUsd:state.ethUsd||null,gasUnits:Number(totalGas),gasUsd,safetyBufferBps:bufferBps,safetyBufferUsd:bufferUsd,netProfit,netRoi,availableVenues,streak,refBid:null,refAsk:null,refMid:null,refDeviationPct:null,refGeneratedAt:null,isTradingHalt:null,v4Included:state.v4PoolCount>0,v4Quoter:V4_QUOTER,quoteBlockConsistency:'requested-same-block',notes:'Direct USDG pools only; V2/V3/V4 exact-input quotes. V4 PoolKeys come from a discovery index, while amounts are quoted onchain. Gas is estimated until atomic executor exists.'}; row.score=scoreRow(row,availableVenues); rows.push(row);
+    const overhead=BigInt(Math.max(0,Number(els('overheadGas').value)||220000)); const totalGas=buy.gasEstimate+sell.gasEstimate+overhead; const gasKnown=typeof state.gasPriceWei==='bigint'&&Number.isFinite(state.ethUsd)&&state.ethUsdQuoteBlock===block; const gasEth=gasKnown?Number(totalGas*state.gasPriceWei)/1e18:null; const gasUsd=gasKnown?gasEth*state.ethUsd:null;
+    const bufferBps=Math.max(0,Number(els('bufferBps').value)||0); const bufferUsd=Number(size)*bufferBps/10000; const netProfit=Number.isFinite(gasUsd)?grossProfit-gasUsd-bufferUsd:null; const netRoi=Number.isFinite(netProfit)?netProfit/Number(size)*100:null;
+    const streakKey=assetKey(a)+'|'+buy.venue+'|'+sell.venue; let streak=state.streaks.get(streakKey)||0; streak=netProfit>0?streak+1:0; state.streaks.set(streakKey,streak);
+    const availableVenues=(buyMap.get(assetKey(a))||[]).length;
+    const row={schemaVersion:2,timestamp:nowIso(),scanId:scanGroupId,scanType,chainId:CHAIN_ID,block,blockHash:sourceBlock.hash,blockTimestamp:Number(BigInt(sourceBlock.timestamp)),symbol:a.symbol,name:a.name,address:a.address,size:Number(size),routePairId:assetKey(a)+'|'+amountRaw.toString()+'|'+buy.venue+'|'+sell.venue,buyVenue:buy.venue,buyVenueLabel:buy.label||venueLabel(buy.venue),sellVenue:sell.venue,sellVenueLabel:sell.label||venueLabel(sell.venue),amountInRaw:amountRaw.toString(),buyAmountRaw:buy.amountOut.toString(),sellAmountRaw:sell.amountOut.toString(),tokenDecimals:a.decimals,decimalsVerified:true,buyRoute:routeMetadata(buy,a,'buy'),sellRoute:routeMetadata(sell,a,'sell'),executionSupported:buy.type!=='v4'&&sell.type!=='v4',simulationStatus:'not-simulated',buyTokenQty:bigintToNum(buy.amountOut,a.decimals),sellOutUsdg:sellOut,grossProfit,grossPct,gasPriceGwei:typeof state.gasPriceWei==='bigint'?Number(state.gasPriceWei)/1e9:null,ethUsd:state.ethUsd||null,gasUnits:Number(totalGas),gasUsd,safetyBufferBps:bufferBps,safetyBufferUsd:bufferUsd,netProfit,netRoi,availableVenues,streak,refBid:null,refAsk:null,refMid:null,refDeviationPct:null,refGeneratedAt:null,isTradingHalt:null,v4Included:state.v4PoolCount>0,v4Quoter:V4_QUOTER,quoteBlockConsistency:'requested-same-block',notes:'Direct USDG pools only; all ordered distinct live buy/sell venue pairs at one block. V4 is scan-only. Estimated net is unavailable when gas pricing is unknown; full executor simulation is required before execution.'}; row.score=scoreRow(row,availableVenues); rows.push(row);
+    }
   }
-  rows.sort((a,b)=>b.netProfit-a.netProfit);
+  rows.sort(sortNetRows);
   // Reference-price REST calls are deliberately off the critical path in FAST mode.
   const refTargets=rows.filter(r=>r.grossPct>-0.10).slice(0,8);
   if(scanType==='deep'){
-    await Promise.all(refTargets.map(r=>fetchReference(r,assets.find(a=>a.symbol===r.symbol))));
+    await Promise.all(refTargets.map(r=>fetchReference(r,assets.find(a=>assetKey(a)===r.address.toLowerCase()))));
     refTargets.forEach(r=>r.score=scoreRow(r,r.availableVenues));
   }
   if(save){ const toSave=rows.filter((r,i)=>r.grossPct>=-0.10 || i<12 || r.netProfit>0); await idbAddMany('rows',toSave); state.savedRows=await idbCount('rows'); }
   if(render){ state.latest=rows; renderTable(); updateMetrics(rows); }
+  window.dispatchEvent(new CustomEvent('arb:scan',{detail:{rows,usdgDecimals:state.usdgDecimals,ethUsd:state.ethUsd,provider:state.provider}}));
   return rows;
 }
 
 async function runQuick(auto=false){
   if(state.scanning){log('Scan skipped: previous scan still running.','dim');return;}
-  if(!state.assets.length){await loadAssets(); if(!state.assets.length)return;}
   state.scanning=true; disableBusy(true,auto?'Shadow scan running…':'Scan running…');
   try{
+    if(!state.assets.length){await loadAssets(); if(!state.assets.length)return;}
     const size=Math.max(1,Number(els('quickSize').value)||1000); const started=Date.now(); const rows=await scanAtSize(state.assets,size,'quick',true,true);
     const routable=rows.length, gross=rows.filter(r=>r.grossProfit>0).length, net=rows.filter(r=>r.netProfit>0).length, best=rows[0]||null;
     await idbAddMany('summaries',[{timestamp:nowIso(),scanType:'quick',size,assetsLoaded:state.assets.length,routable,positiveGross:gross,positiveNet:net,bestSymbol:best?.symbol||null,bestNetProfit:best?.netProfit||null,bestNetRoi:best?.netRoi||null,durationMs:Date.now()-started,rpcHost:safeHost(els('rpc').value),v4Included:state.v4PoolCount>0}]);
@@ -441,17 +567,17 @@ async function runQuick(auto=false){
 
 async function runDeep(){
   if(state.scanning)return; if(!state.assets.length){await loadAssets();if(!state.assets.length)return;}
-  let targets=state.latest.filter(r=>r.grossPct>-0.10).slice(0,6).map(r=>r.symbol); if(!targets.length) targets=state.latest.slice(0,5).map(r=>r.symbol); if(!targets.length){log('Run Quick Scan first.','err');return;}
+  let targets=[...new Set(state.latest.filter(r=>r.grossPct>-0.10).map(r=>r.address.toLowerCase()))].slice(0,6); if(!targets.length) targets=[...new Set(state.latest.map(r=>r.address.toLowerCase()))].slice(0,5); if(!targets.length){log('Run Quick Scan first.','err');return;}
   const sizes=els('deepSizes').value.split(',').map(x=>Number(x.trim())).filter(x=>x>0).slice(0,12); if(!sizes.length)return;
   state.scanning=true;disableBusy(true,'Deep scan running…');
-  try{ const subset=state.assets.filter(a=>targets.includes(a.symbol)); let all=[]; for(const size of sizes){ const rows=await scanAtSize(subset,size,'deep',true,false); all.push(...rows); await sleep(120); }
-    all.sort((a,b)=>b.netProfit-a.netProfit); state.latest=all;renderTable();updateMetrics(all); await idbAddMany('summaries',[{timestamp:nowIso(),scanType:'deep',sizes,targets,rows:all.length,positiveNet:all.filter(r=>r.netProfit>0).length,bestSymbol:all[0]?.symbol||null,bestNetProfit:all[0]?.netProfit||null,v4Included:state.v4PoolCount>0}]); log('Deep scan complete: '+all.length+' route-size observations.','ok');
+  try{ const subset=state.assets.filter(a=>targets.includes(assetKey(a))); let all=[]; for(const size of sizes){ const rows=await scanAtSize(subset,size,'deep',true,false); all.push(...rows); await sleep(120); }
+    all.sort(sortNetRows); state.latest=all;renderTable();updateMetrics(all); await idbAddMany('summaries',[{timestamp:nowIso(),scanType:'deep',sizes,targets,rows:all.length,positiveNet:all.filter(r=>r.netProfit>0).length,bestSymbol:all[0]?.symbol||null,bestNetProfit:all[0]?.netProfit||null,v4Included:state.v4PoolCount>0}]); log('Deep scan complete: '+all.length+' route-size observations.','ok');
   }catch(e){log('DEEP ERROR: '+(e.shortMessage||e.message),'err');} finally{state.scanning=false;disableBusy(false);}
 }
 
 function safeHost(url){try{return new URL(url).host}catch(_){return 'custom';}}
 function updateMetrics(rows){
-  els('mRoutable').textContent=rows.length; els('mGross').textContent=rows.filter(r=>r.grossProfit>0).length; els('mNet').textContent=rows.filter(r=>r.netProfit>0).length; const best=rows.slice().sort((a,b)=>b.netProfit-a.netProfit)[0]; els('mBest').textContent=best?money(best.netProfit):'$0.00'; els('mBestSym').textContent=best?best.symbol+' · '+pct(best.netRoi):'—'; els('mSaved').textContent=state.savedRows.toLocaleString(); if(best&&best.netProfit>0) els('mBest').className='v green'; else els('mBest').className='v';
+  els('mRoutable').textContent=rows.length; els('mGross').textContent=rows.filter(r=>r.grossProfit>0).length; els('mNet').textContent=rows.filter(r=>r.netProfit>0).length; const best=rows.slice().sort(sortNetRows)[0]; els('mBest').textContent=best?money(best.netProfit):'$0.00'; els('mBestSym').textContent=best?best.symbol+' · '+pct(best.netRoi):'—'; els('mSaved').textContent=state.savedRows.toLocaleString(); if(best&&best.netProfit>0) els('mBest').className='v green'; else els('mBest').className='v';
 }
 function currentRows(){ const q=els('search').value.trim().toLowerCase(); return state.latest.filter(r=>{ let ok=true; if(state.filter==='net')ok=r.netProfit>0; else if(state.filter==='gross')ok=r.grossProfit>0; else if(state.filter==='strong')ok=r.score>=70; else if(state.filter==='near')ok=r.grossPct>=-0.10; if(q)ok=ok&&(r.symbol.toLowerCase().includes(q)||r.buyVenueLabel.toLowerCase().includes(q)||r.sellVenueLabel.toLowerCase().includes(q)); return ok; }); }
 function renderTable(){
@@ -472,8 +598,8 @@ function stopShadow(){ state.auto=false; if(state.autoTimer)clearTimeout(state.a
 
 function downloadBlob(name,text,type){ const blob=new Blob([text],{type}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},800); }
 function csvEscape(v){ if(v===null||v===undefined)return ''; const s=typeof v==='object'?JSON.stringify(v):String(v); return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s; }
-async function exportCSV(){ const rows=await idbAll('rows'); if(!rows.length){log('No saved rows to export.','err');return;} const keys=['timestamp','scanType','block','symbol','address','size','buyVenue','sellVenue','buyTokenQty','sellOutUsdg','grossProfit','grossPct','gasPriceGwei','ethUsd','gasUnits','gasUsd','safetyBufferBps','safetyBufferUsd','netProfit','netRoi','availableVenues','streak','refBid','refAsk','refMid','refDeviationPct','refGeneratedAt','isTradingHalt','score','v4Included','notes']; const csv=[keys.join(','),...rows.map(r=>keys.map(k=>csvEscape(r[k])).join(','))].join('\n'); downloadBlob('robinhood-arb-data-'+new Date().toISOString().replace(/[:.]/g,'-')+'.csv',csv,'text/csv;charset=utf-8');log('CSV exported: '+rows.length+' rows.','ok'); }
-async function exportJSON(){ const rows=await idbAll('rows'), summaries=await idbAll('summaries'); const payload={exportedAt:nowIso(),scanner:'Robinhood Stock Arb Scanner V1.3 FAST',schemaVersion:1,methodology:{chainId:CHAIN_ID,baseToken:'USDG',baseTokenAddress:USDG,stockDecimals:18,venues:VENUES,v4Included:state.v4PoolCount>0,v4DiscoveredPoolCount:state.v4PoolCount,v4DiscoveryEndpoint:FLETCH_POOLS_API_DIRECT,v4Quoter:V4_QUOTER,quoteMethod:'same-block exact-input eth_call via JSON-RPC batches with adaptive split fallback; cached live-route topology; sell phase only re-quotes venues proven live on buy phase; direct USDG pools; V4 PoolKeys discovered then re-quoted onchain',warning:'Gas is estimated. Full atomic executor simulation is not available in V1. V4 index data is discovery-only; quote amounts come from the onchain Uniswap V4 Quoter.'},settings:{rpcHost:safeHost(els('rpc').value),quickSize:Number(els('quickSize').value),intervalSec:Number(els('interval').value),safetyBufferBps:Number(els('bufferBps').value),executorOverheadGas:Number(els('overheadGas').value),deepSizes:els('deepSizes').value},assetCount:state.assets.length,v4DiscoveredPoolCount:state.v4PoolCount,liveRouteCacheTokens:state.routeCache.size,lastScanDurationMs:state.lastDurationMs,rpcBatchSupported:state.rpcBatchSupported,summaries,rows}; downloadBlob('robinhood-arb-full-'+new Date().toISOString().replace(/[:.]/g,'-')+'.json',JSON.stringify(payload,null,2),'application/json');log('Full JSON exported: '+rows.length+' rows + '+summaries.length+' summaries. Send this JSON to ChatGPT for analysis.','ok'); }
+async function exportCSV(){ const rows=await idbAll('rows'); if(!rows.length){log('No saved rows to export.','err');return;} const keys=['timestamp','scanType','block','blockHash','symbol','address','size','amountInRaw','buyAmountRaw','sellAmountRaw','tokenDecimals','buyRoute','sellRoute','executionSupported','simulationStatus','buyVenue','sellVenue','buyTokenQty','sellOutUsdg','grossProfit','grossPct','gasPriceGwei','ethUsd','gasUnits','gasUsd','safetyBufferBps','safetyBufferUsd','netProfit','netRoi','availableVenues','streak','refBid','refAsk','refMid','refDeviationPct','refGeneratedAt','isTradingHalt','score','v4Included','notes']; const csv=[keys.join(','),...rows.map(r=>keys.map(k=>csvEscape(r[k])).join(','))].join('\n'); downloadBlob('robinhood-arb-data-'+new Date().toISOString().replace(/[:.]/g,'-')+'.csv',csv,'text/csv;charset=utf-8');log('CSV exported: '+rows.length+' rows.','ok'); }
+async function exportJSON(){ const rows=await idbAll('rows'), summaries=await idbAll('summaries'); const payload={exportedAt:nowIso(),scanner:'Robinhood Flash Loan Atomic Arb V2',schemaVersion:2,methodology:{chainId:CHAIN_ID,baseToken:'USDG',baseTokenAddress:USDG,stockDecimals:'verified per asset',venues:VENUES,v4Included:state.v4PoolCount>0,v4DiscoveredPoolCount:state.v4PoolCount,v4DiscoveryEndpoint:FLETCH_POOLS_API_DIRECT,v4Quoter:V4_QUOTER,quoteMethod:'same-block exact-input eth_call via JSON-RPC batches with adaptive split fallback; cached live-route topology; sell phase only re-quotes venues proven live on buy phase; direct USDG pools; V4 PoolKeys discovered then re-quoted onchain',warning:'Gas and USDG valuation are estimated. Scanner values are estimates. Use the atomic execution panel for whole-transaction checks before sending. V4 index data is discovery-only; quote amounts come from the onchain Uniswap V4 Quoter.'},settings:{rpcHost:safeHost(els('rpc').value),quickSize:Number(els('quickSize').value),intervalSec:Number(els('interval').value),safetyBufferBps:Number(els('bufferBps').value),executorOverheadGas:Number(els('overheadGas').value),deepSizes:els('deepSizes').value},assetCount:state.assets.length,v4DiscoveredPoolCount:state.v4PoolCount,liveRouteCacheTokens:state.routeCache.size,lastScanDurationMs:state.lastDurationMs,rpcBatchSupported:state.rpcBatchSupported,summaries,rows}; downloadBlob('robinhood-arb-full-'+new Date().toISOString().replace(/[:.]/g,'-')+'.json',JSON.stringify(payload,null,2),'application/json');log('Full JSON exported: '+rows.length+' rows + '+summaries.length+' summaries. Send this JSON to ChatGPT for analysis.','ok'); }
 
 els('loadBtn').onclick=loadAssets; els('scanBtn').onclick=()=>runQuick(false); els('startBtn').onclick=startShadow; els('stopBtn').onclick=stopShadow; els('deepBtn').onclick=runDeep; els('csvBtn').onclick=exportCSV; els('jsonBtn').onclick=exportJSON; els('clearBtn').onclick=async()=>{ if(!confirm('Delete all locally saved scanner history?'))return; await idbClear();state.savedRows=0;els('mSaved').textContent='0';log('History cleared.','dim');}; els('search').oninput=renderTable;
 els('tabs').addEventListener('click',e=>{const t=e.target.closest('.tab');if(!t)return;document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));t.classList.add('active');state.filter=t.dataset.filter;renderTable();});
@@ -481,5 +607,7 @@ window.addEventListener('beforeunload',()=>{if(state.auto)clearInterval(state.au
 (async()=>{ try{state.db=await openDB();state.savedRows=await idbCount('rows');els('mSaved').textContent=state.savedRows.toLocaleString();log('Local database ready. '+state.savedRows+' historical rows found.','ok'); const cache=localStorage.getItem('rh-assets-cache'); if(cache){ try{const raw=JSON.parse(cache); const list=(raw.assets||[]).map(a=>{const dep=(a.deployments||[]).find(d=>Number(d.chainId)===CHAIN_ID);return dep?{symbol:a.tokenSymbol,name:a.tokenName,address:dep.contractAddress,multiplier:Number(a.currentMultiplier||1),status:a.status,logoUrl:a.logoUrl||'',tradingCapabilities:a.tradingCapabilities||{}}:null}).filter(Boolean).filter(a=>!a.status||a.status==='ASSET_STATUS_ACTIVE');state.assets=list;els('mAssets').textContent=list.length;els('assetStatus').textContent=list.length+' cached tokens · click LOAD to refresh';}catch(_){}} }catch(e){log('IndexedDB failed: '+e.message,'err');} })();
 })();
 </script>
+<script src="/execution.js"></script>
 </body>
 </html>
+

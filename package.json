@@ -1,0 +1,15 @@
+{
+  "name": "robinhood-flash-arb",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "compile": "node scripts/compile.mjs",
+    "test:contracts": "node --test test/contract.test.mjs"
+  },
+  "devDependencies": {
+    "ethers": "6.13.4",
+    "ganache": "7.9.2",
+    "solc": "0.8.30"
+  }
+}
