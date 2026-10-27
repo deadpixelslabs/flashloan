@@ -168,22 +168,31 @@ function bigintToNum(v,dec){return Number(ethers.formatUnits(v,dec));}
 function venueLabel(key){ if(String(key).startsWith('V4:')) return 'Uni V4 '+String(key).slice(3,11); return VENUES.find(v=>v.key===key)?.label || key; }
 function statusFor(r){ if(!Number.isFinite(r.netProfit))return ['GAS UNKNOWN','no']; if(r.netProfit>5 && r.netRoi>0.10 && r.score>=70)return ['CANDIDATE','strong']; if(r.netProfit>0)return ['CHECK ATOMIC','real']; if(r.grossProfit>0 || r.netRoi>-0.05)return ['WATCH','watch']; return ['NO ARB','no']; }
 
-async function fetchJSON(primaryUrl,directUrl,label){
-  const urls=[primaryUrl,directUrl].filter(Boolean); let lastErr=null;
-  for(let i=0;i<urls.length;i++){
-    const url=urls[i];
-    try{
-      const r=await fetch(url,{cache:'no-store',headers:{'Accept':'application/json'}});
-      if(!r.ok) throw new Error('HTTP '+r.status);
-      const ct=(r.headers.get('content-type')||'').toLowerCase();
-      if(!ct.includes('json')){ const t=await r.text(); throw new Error('Expected JSON, got '+(ct||'unknown')+' ('+t.slice(0,40).replace(/\s+/g,' ')+')'); }
-      const j=await r.json();
-      if(i===0) log(label+' loaded through same-origin Vercel proxy.','ok');
-      else log(label+' loaded directly (proxy unavailable).','dim');
-      return j;
-    }catch(e){ lastErr=e; if(i===0) log(label+' proxy failed; trying direct endpoint: '+e.message,'err'); }
-  }
-  throw lastErr||new Error(label+' fetch failed');
+async function fetchJSON(primaryUrl,directUrl,label,options={}){
+  const urls=[primaryUrl,directUrl].filter(Boolean),timeoutMs=Math.max(1,Number(options.timeoutMs)||8000);
+  const controller=new AbortController(),operationSignal=state.operationAbort?.signal;
+  const signal=operationSignal?AbortSignal.any([controller.signal,operationSignal]):controller.signal;
+  const timer=setTimeout(()=>controller.abort(),timeoutMs);let lastError;
+  try{
+    for(let index=0;index<urls.length;index++){
+      try{
+        if(signal.aborted)throw new DOMException('Request aborted','AbortError');
+        const response=await fetch(urls[index],{cache:'no-store',headers:{Accept:'application/json'},signal});
+        if(!response.ok)throw new Error('HTTP '+response.status);
+        const contentType=(response.headers.get('content-type')||'').toLowerCase();
+        if(!contentType.includes('json'))throw new Error('Expected JSON; got '+(contentType||'unknown content type'));
+        const data=await response.json();
+        log(label+(index===0?' loaded through same-origin Vercel proxy.':' loaded directly (proxy unavailable).'),index===0?'ok':'dim');
+        return data;
+      }catch(error){
+        if(operationSignal?.aborted)throw new DOMException('Operation stopped','AbortError');
+        if(controller.signal.aborted)throw new Error(label+' timed out after '+Math.ceil(timeoutMs/1000)+' seconds');
+        lastError=error;
+        if(index===0&&urls.length>1)log(label+' proxy failed; trying direct endpoint: '+error.message,'err');
+      }
+    }
+    throw lastError||new Error(label+' fetch failed');
+  }finally{clearTimeout(timer);}
 }
 
 async function openDB(){
@@ -320,17 +329,19 @@ async function loadV4Pools(){
   const assetByAddress=new Map(state.assets.map(a=>[a.address.toLowerCase(),a]));
   let pools=[];
   try{
-    const limit=100;
+    const limit=100,deadline=Date.now()+15000;
     for(let offset=0;offset<1000;offset+=limit){
+      const remaining=deadline-Date.now();if(remaining<=0)throw new Error('V4 discovery time limit reached');
       const url=FLETCH_POOLS_API+'?kind=listed&tier=active&sort=depth&venue=uniswap_v4&limit='+limit+'&offset='+offset;
       const directUrl=FLETCH_POOLS_API_DIRECT+'?kind=listed&tier=active&sort=depth&venue=uniswap_v4&limit='+limit+'&offset='+offset;
-      const j=await fetchJSON(url,directUrl,'V4 discovery'); const page=Array.isArray(j.pools)?j.pools:[]; pools.push(...page); if(page.length<limit) break;
+      const j=await fetchJSON(url,directUrl,'V4 discovery',{timeoutMs:Math.min(8000,remaining)}); const page=Array.isArray(j.pools)?j.pools:[]; pools.push(...page); if(page.length<limit) break;
     }
     localStorage.setItem('rh-v4-pools-cache',JSON.stringify(pools));
   }catch(e){
+    if(state.operationAbort?.signal.aborted)throw new DOMException('Operation stopped','AbortError');
     const cache=localStorage.getItem('rh-v4-pools-cache');
     if(cache){ pools=JSON.parse(cache); log('V4 discovery API unavailable; using cached PoolKeys.','err'); }
-    else { log('V4 PoolKey discovery unavailable; continuing with V2/V3 only.','err'); pools=[]; }
+    else { log('V4 discovery unavailable: '+e.message+' · continuing with '+(pools.length?'partial V4 keys and ':'')+'V2/V3.','err'); }
   }
   const bySymbol=new Map(); const usdg=USDG.toLowerCase();
   for(const p of pools){
@@ -379,7 +390,10 @@ async function loadAssets(options={}){
       state.assets=await loadTokenDecimals(list,block);
       if(!state.assets.length)throw new Error('No token metadata could be verified. Retry after the RPC recovers.');
       els('mAssets').textContent=state.assets.length;
-      restoreLiveRoutes();await loadV4Pools();
+      restoreLiveRoutes();
+      disableBusy(true,'Finding optional V4 pools…');
+      els('assetStatus').textContent=state.assets.length+' verified · finding optional V4 pools';
+      await loadV4Pools();
       if(state.operationAbort?.signal.aborted)throw new DOMException('Operation stopped','AbortError');
       state.assetsReady=true;
       els('assetStatus').textContent=state.assets.length+' verified · '+state.v4PoolCount+' V4 pools';
