@@ -152,6 +152,8 @@ const state = { provider:null, assets:[], v4Pools:new Map(), v4PoolCount:0, usdg
 const v2Iface = new ethers.Interface(['function getAmountsOut(uint256 amountIn,address[] path) view returns (uint256[] amounts)']);
 const v3Iface = new ethers.Interface(['function quoteExactInputSingle((address tokenIn,address tokenOut,uint256 amountIn,uint24 fee,uint160 sqrtPriceLimitX96) params) returns (uint256 amountOut,uint160 sqrtPriceX96After,uint32 initializedTicksCrossed,uint256 gasEstimate)']);
 const multiIface = new ethers.Interface(['function aggregate3((address target,bool allowFailure,bytes callData)[] calls) payable returns ((bool success,bytes returnData)[] returnData)']);
+const QUOTE_MULTICALL = '0x282a3c4d320cc7f0d5eaf56b8029e4b88338f0a3';
+const quoteMultiIface = new ethers.Interface(['function multicall((address target,uint256 gasLimit,bytes callData)[] calls) returns (uint256 blockNumber,(bool success,uint256 gasUsed,bytes returnData)[] returnData)']);
 const v4Iface = new ethers.Interface(['function quoteExactInputSingle(((address currency0,address currency1,uint24 fee,int24 tickSpacing,address hooks) poolKey,bool zeroForOne,uint128 exactAmount,bytes hookData) params) returns (uint256 amountOut,uint256 gasEstimate)']);
 const erc20Iface = new ethers.Interface(['function decimals() view returns (uint8)']);
 
@@ -277,6 +279,20 @@ async function scannerMulticallAvailable(blockTag){
   scannerRpcRuntime.multicallChecks.set(cacheKey,available);
   log(available?'Multicall3 bytecode verified: 16 quotes share one paced RPC request.':'Multicall3 is unavailable: using paced individual RPC calls.',available?'ok':'dim');
   return available;
+}
+async function scannerQuoteMulticallAvailable(blockTag){
+  const cacheKey='quote|'+state.providerEndpoint+'|'+CHAIN_ID;
+  if(scannerRpcRuntime.multicallChecks.has(cacheKey)) return scannerRpcRuntime.multicallChecks.get(cacheKey);
+  const code=await scannerRpcRequest('eth_getCode',[QUOTE_MULTICALL,ethers.toQuantity(blockTag)]);
+  const available=typeof code==='string'&&/^0x[0-9a-f]+$/i.test(code)&&code.length>10&&code.toLowerCase().includes('1749e1e3');
+  scannerRpcRuntime.multicallChecks.set(cacheKey,available);
+  if(available)log('Uniswap quote batching verified: each quote has an isolated 1.5m gas limit.','ok');
+  return available;
+}
+async function scannerBatchStrategy(items,blockTag){
+  const quotes=items.some(item=>item.meta?.type!=='decimals');
+  if(quotes&&await scannerQuoteMulticallAvailable(blockTag)) return 'quote';
+  return await scannerMulticallAvailable(blockTag)?'aggregate3':'direct';
 }
 async function initProvider(){
   const endpoint=resolvedRpcEndpoint();
@@ -414,27 +430,63 @@ async function loadAssets(options={}){
   return job;
 }
 
-async function rpcBatchPost(items,blockTag,idBase=1){
+async function rpcBatchPost(items,blockTag,idBase=1,strategy){
   if(!items.length) return [];
-  const encoded=multiIface.encodeFunctionData('aggregate3',[items.map(item=>[item.target,true,item.callData])]);
-  // aggregate3 executes ordinary CALLs inside eth_call, supporting non-view V3/V4 quoters.
-  const result=await scannerRpcRequest('eth_call',[{to:MULTICALL3,data:encoded,gas:'0x1c9c380'},ethers.toQuantity(blockTag)]);
+  const mode=strategy||await scannerBatchStrategy(items,blockTag);
+  const isolated=mode==='quote';
+  const iface=isolated?quoteMultiIface:multiIface,method=isolated?'multicall':'aggregate3';
+  const calls=items.map(item=>isolated?[item.target,1500000,item.callData]:[item.target,true,item.callData]);
+  const encoded=iface.encodeFunctionData(method,[calls]);
+  // Both lenses execute ordinary CALLs inside eth_call, supporting non-view V3/V4 quoters.
+  const result=await scannerRpcRequest('eth_call',[{to:isolated?QUOTE_MULTICALL:MULTICALL3,data:encoded,gas:'0x1c9c380'},ethers.toQuantity(blockTag)]);
   let decoded;
-  try{decoded=multiIface.decodeFunctionResult('aggregate3',result)[0];}catch(_e){throw rpcError('Multicall3 returned invalid aggregate3 data');}
-  if(decoded.length!==items.length) throw rpcError('Multicall3 result count did not match the requested quotes');
-  return items.map((item,index)=>({success:Boolean(decoded[index].success??decoded[index][0]),returnData:decoded[index].returnData??decoded[index][1],meta:item.meta}));
+  try{
+    const output=iface.decodeFunctionResult(method,result);
+    // Uniswap's returned blockNumber can be an L1 estimate. The RPC block tag remains authoritative.
+    decoded=output[isolated?1:0];
+  }catch(_e){throw rpcError('Quote multicall returned invalid '+method+' data');}
+  if(decoded.length!==items.length) throw rpcError('Quote multicall result count did not match the requested quotes');
+  return items.map((item,index)=>({success:Boolean(decoded[index].success??decoded[index][0]),returnData:decoded[index].returnData??decoded[index][isolated?2:1],meta:item.meta}));
+}
+function isExplicitQuoteGasLimit(error){
+  if(error?.rpcRateLimited||error?.status===429||error?.name==='AbortError') return false;
+  const nested=error?.info?.error||error?.error||error;
+  const message=String(nested?.message||error?.message||'').replace(/^RPC eth_call:\s*/i,'');
+  return /^(?:execution reverted:\s*)?(?:out of gas|execution ran out of gas|gas required exceeds allowance(?:\s*\([^)]*\))?|gas limit exceeded)(?:$|[.:\s])/i.test(message);
 }
 async function rpcSingle(item,blockTag){
   try{
-    const result=await scannerRpcRequest('eth_call',[{to:item.target,data:item.callData},ethers.toQuantity(blockTag)]);
+    const result=await scannerRpcRequest('eth_call',[{to:item.target,data:item.callData,gas:'0x4c4b40'},ethers.toQuantity(blockTag)]);
     return {success:true,returnData:result,meta:item.meta};
   }catch(error){
+    if(isExplicitQuoteGasLimit(error)) return {success:false,returnData:'0x',meta:item.meta,error:error.shortMessage||error.message,unavailableReason:'gas-limit'};
     if(isQuoteRevert(error)) return {success:false,returnData:'0x',meta:item.meta,error:error.shortMessage||error.message};
     throw error;
   }
 }
 async function rpcBatchWithFallback(items,blockTag,idBase,onChunk){
-  if(await scannerMulticallAvailable(blockTag)){const results=await rpcBatchPost(items,blockTag,idBase);if(onChunk) onChunk(results);return results;}
+  throwIfScannerAborted();
+  const strategy=await scannerBatchStrategy(items,blockTag);
+  if(strategy!=='direct'){
+    try{
+      const results=await rpcBatchPost(items,blockTag,idBase,strategy);
+      if(onChunk) onChunk(results);
+      return results;
+    }catch(error){
+      if(!isExplicitQuoteGasLimit(error)) throw error;
+      if(items.length>1){
+        const middle=Math.ceil(items.length/2);
+        log('Multicall gas limit reached; splitting '+items.length+' quotes into '+middle+' + '+(items.length-middle)+'.','dim');
+        const first=await rpcBatchWithFallback(items.slice(0,middle),blockTag,idBase,onChunk);
+        const second=await rpcBatchWithFallback(items.slice(middle),blockTag,idBase+middle,onChunk);
+        return first.concat(second);
+      }
+      // A single problematic quote gets one capped direct call, then remains unavailable.
+      const result=await rpcSingle(items[0],blockTag);
+      if(onChunk) onChunk([result]);
+      return [result];
+    }
+  }
   const results=[];
   for(const item of items){throwIfScannerAborted();const result=await rpcSingle(item,blockTag);results.push(result);if(onChunk) onChunk([result]);}
   return results;

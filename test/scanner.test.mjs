@@ -6,6 +6,8 @@ const html=fs.readFileSync(new URL('../index.html',import.meta.url),'utf8');
 const region=html.slice(html.indexOf('function resolvedRpcEndpoint(){'),html.indexOf('function safeHost(url)'));
 const address=n=>'0x'+n.toString(16).padStart(40,'0');
 const multiIface=new ethers.Interface(['function aggregate3((address target,bool allowFailure,bytes callData)[] calls) payable returns ((bool success,bytes returnData)[])']);
+const QUOTE_MULTICALL='0x282a3c4d320cc7f0d5eaf56b8029e4b88338f0a3';
+const quoteMultiIface=new ethers.Interface(['function multicall((address target,uint256 gasLimit,bytes callData)[] calls) returns(uint256 blockNumber,(bool success,uint256 gasUsed,bytes returnData)[] returnData)']);
 const erc20Iface=new ethers.Interface(['function decimals() view returns(uint8)']);
 const v2Iface=new ethers.Interface(['function getAmountsOut(uint256 amountIn,address[] path) view returns(uint256[])']);
 const v3Iface=new ethers.Interface(['function quoteExactInputSingle((address tokenIn,address tokenOut,uint256 amountIn,uint24 fee,uint160 sqrtPriceLimitX96) params) returns(uint256,uint160,uint32,uint256)']);
@@ -29,7 +31,7 @@ function harness(){
     CHAIN_ID:4663,USDG:address(1),WETH:address(2),VENUES:[],V2_ROUTER:address(3),V3_QUOTER:address(4),V4_QUOTER:address(5),MULTICALL3:address(6),
     window:{location:{href:'https://example.vercel.app/'},RhRpcGate:gate,dispatchEvent(){}},
     localStorage:{getItem:key=>h.storage.get(key)??null,setItem:(key,value)=>h.storage.set(key,value)},
-    els:id=>h.fields[id],log(){},setLive(){},money:n=>String(n),ethers,multiIface,erc20Iface,v2Iface,v3Iface,v4Iface,
+    els:id=>h.fields[id],log(){},setLive(){},money:n=>String(n),ethers,multiIface,quoteMultiIface,QUOTE_MULTICALL,erc20Iface,v2Iface,v3Iface,v4Iface,
     bigintToNum:(value,decimals)=>Number(ethers.formatUnits(value,decimals)),chunks:(array,count)=>Array.from({length:Math.ceil(array.length/count)},(_,i)=>array.slice(i*count,(i+1)*count))});
   vm.runInContext(region,h.context);return h;
 }
@@ -53,22 +55,78 @@ h.handler=async request=>{
 };
 c.quoteCalls=Array.from({length:34},(_,index)=>({target:address(4),callData:v3Iface.encodeFunctionData('quoteExactInputSingle',[[address(1),address(20),1n,500,0]]),meta:{index,type:'v3'}}));
 const aggregated=await vm.runInContext("rpcCallRaw(quoteCalls,100,'TEST')",c);
-assert.equal(aggregated.length,34);assert.equal(aggregateCount,3);assert.equal(h.requests.length,4,'34 quotes must use one code check and three aggregate calls');
+assert.equal(aggregated.length,34);assert.equal(aggregateCount,3);assert.equal(h.requests.length,5,'34 quotes use two cached lens checks and three aggregate calls');
 assert.equal(maxActive,1);assert.equal(aggregated.filter(result=>!result.success).length,3,'reverting subcalls must not be retried');
 assert.equal(aggregated[17].meta.index,17);assert.equal(v3Iface.getFunction('quoteExactInputSingle').stateMutability,'nonpayable');
+assert.equal(quoteMultiIface.getFunction('multicall').selector,'0x1749e1e3');
+const boundedLens=harness();boundedLens.context.calls=c.quoteCalls.slice(0,8).map((call,index)=>({...call,target:index===3?address(99):call.target}));
+boundedLens.handler=async request=>{
+  if(request.method==='eth_getCode'){
+    assert.equal(request.params[0],QUOTE_MULTICALL,'available quote lens should avoid an unnecessary M3 probe');
+    return {result:'0x6080631749e1e360005260206000f3'};
+  }
+  assert.equal(request.params[0].to,QUOTE_MULTICALL);assert.equal(request.params[0].gas,'0x1c9c380');assert.equal(request.params[1],'0x64');
+  const calls=quoteMultiIface.decodeFunctionData('multicall',request.params[0].data)[0];
+  assert.equal(calls.every(call=>call.gasLimit===1500000n),true,'each quote must have its own bounded gas budget');
+  const results=calls.map(call=>[call.target.toLowerCase()!==address(99),call.target.toLowerCase()===address(99)?1500000:100000,call.target.toLowerCase()===address(99)?'0x':'0x1234']);
+  return {result:quoteMultiIface.encodeFunctionResult('multicall',[999999n,results])};
+};
+const boundedResults=await vm.runInContext("rpcCallRaw(calls,100,'BOUNDED LENS')",boundedLens.context);
+assert.equal(boundedResults.length,8);assert.equal(boundedResults.filter(result=>result.success).length,7);assert.equal(boundedResults[3].success,false);
+assert.equal(boundedLens.requests.length,2,'a poisoned quote must be isolated inside the lens without splitting/retrying neighbors');
+console.log('PASS: official quote lens is runtime verified, caps every quote at1.5m gas, preserves the RPC block tag, ignores its L1 block estimate, and isolates a poisoned quote without retries.');
 const fallback=harness();
 fallback.context.calls=c.quoteCalls.slice(0,3);
 fallback.handler=async request=>request.method==='eth_getCode'?{result:'0x'}:{result:'0x1234'};
 const singles=await vm.runInContext("rpcCallRaw(calls,100,'NO MULTICALL')",fallback.context);
-assert.equal(singles.length,3);assert.equal(fallback.requests.length,4);assert.equal(fallback.requests.filter(r=>r.payload.method==='eth_call').every(r=>r.payload.params[0].to===address(4)&&r.payload.params[1]==='0x64'),true);
+assert.equal(singles.length,3);assert.equal(fallback.requests.length,5);assert.equal(fallback.requests.filter(r=>r.payload.method==='eth_call').every(r=>r.payload.params[0].to===address(4)&&r.payload.params[1]==='0x64'),true);
 const quota=harness();quota.context.calls=c.quoteCalls;
 quota.handler=async request=>{if(request.method==='eth_getCode')return {result:deployedCode};throw Object.assign(new Error('RPC HTTP 429'),{rpcRateLimited:true,rpcInfrastructure:true,status:429,retryAt:1234});};
 await assert.rejects(()=>vm.runInContext("rpcCallRaw(calls,100,'QUOTA')",quota.context),error=>error.rpcRateLimited&&error.retryAt===1234);
-assert.equal(quota.requests.length,2,'quota exhaustion must not trigger nested splitting or single-call retries');
+assert.equal(quota.requests.length,3,'quota exhaustion must not trigger nested splitting or single-call retries');
+const gasSplit=harness();gasSplit.context.calls=c.quoteCalls.slice(0,16);const splitSizes=[],delivered=[];
+gasSplit.context.collectChunk=chunk=>delivered.push(...chunk);
+gasSplit.handler=async request=>{
+  if(request.method==='eth_getCode')return {result:deployedCode};
+  assert.equal(request.params[1],'0x64','gas splits must preserve the original quote block');
+  const calls=multiIface.decodeFunctionData('aggregate3',request.params[0].data)[0];
+  splitSizes.push(calls.length);
+  assert.equal(request.params[0].gas,'0x1c9c380','aggregate gas must stay bounded');
+  assert.equal(calls.every(call=>call.allowFailure),true);
+  if(calls.length>4)return {error:{code:-32000,message:'out of gas'}};
+  return {result:multiIface.encodeFunctionResult('aggregate3',[calls.map(()=>[true,'0x1234'])])};
+};
+const splitResults=await vm.runInContext("rpcCallRaw(calls,100,'GAS SPLIT',collectChunk)",gasSplit.context);
+assert.equal(splitResults.length,16);assert.deepEqual(splitSizes,[16,8,4,4,8,4,4]);
+assert.deepEqual(Array.from(splitResults,result=>result.meta.index),Array.from({length:16},(_,index)=>index));
+assert.equal(delivered.length,16,'recovery must deliver successful progress exactly once');
+const poison=harness();poison.context.calls=c.quoteCalls.slice(0,8).map((call,index)=>({...call,target:index===3?address(99):call.target}));
+let poisonDirect=0;
+poison.handler=async request=>{
+  if(request.method==='eth_getCode')return {result:deployedCode};
+  assert.equal(request.params[1],'0x64');
+  if(request.params[0].to===address(99)){
+    poisonDirect++;assert.equal(request.params[0].gas,'0x4c4b40','direct fallback must have an explicit5m gas cap');
+    return {error:{code:-32000,message:'out of gas'}};
+  }
+  const calls=multiIface.decodeFunctionData('aggregate3',request.params[0].data)[0];
+  if(calls.some(call=>call.target.toLowerCase()===address(99)))return {error:{code:-32000,message:'out of gas'}};
+  return {result:multiIface.encodeFunctionResult('aggregate3',[calls.map(()=>[true,'0x1234'])])};
+};
+const isolated=await vm.runInContext("rpcCallRaw(calls,100,'POISON')",poison.context);
+assert.equal(isolated.length,8);assert.equal(isolated.filter(result=>result.success).length,7);assert.equal(poisonDirect,1);
+assert.equal(isolated[3].success,false);assert.equal(isolated[3].returnData,'0x');assert.equal(isolated[3].unavailableReason,'gas-limit');
+assert.deepEqual(Array.from(isolated,result=>result.meta.index),Array.from({length:8},(_,index)=>index),'poison quote must not drop or reorder neighbors');
+const transportFailure=harness();transportFailure.context.calls=c.quoteCalls.slice(0,16);
+transportFailure.handler=async request=>{if(request.method==='eth_getCode')return {result:deployedCode};throw Object.assign(new Error('HTTP502 upstream unavailable'),{rpcInfrastructure:true});};
+await assert.rejects(()=>vm.runInContext("rpcCallRaw(calls,100,'INFRA')",transportFailure.context),/502/);
+assert.equal(transportFailure.requests.length,3,'ordinary infrastructure failures must never split');
+assert.equal(vm.runInContext("isExplicitQuoteGasLimit({message:'out of gas',rpcRateLimited:true,status:429})",c),false);
+console.log('PASS: explicit aggregateOOG splits16→8→4 sequentially with exact block/progress; one poisoned quote is isolated with one capped direct attempt; neighboring quotes survive; quota/network errors never split.');
 const absentSelector=harness();absentSelector.context.calls=c.quoteCalls.slice(0,1);
 absentSelector.handler=async request=>request.method==='eth_getCode'?{result:'0x60006000'}:{result:'0x1234'};
 await vm.runInContext("rpcCallRaw(calls,100)",absentSelector.context);
-assert.equal(absentSelector.requests[1].payload.params[0].to,address(4),'unverified aggregate3 bytecode must use direct calls');
+assert.equal(absentSelector.requests.find(request=>request.payload.method==='eth_call').payload.params[0].to,address(4),'unverified aggregate3 bytecode must use direct calls');
 const initialized=harness();initialized.context.state.operationAbort=new AbortController();
 initialized.handler=async request=>({result:request.method==='eth_chainId'?'0x1237':request.method==='eth_blockNumber'?'0x64':erc20Iface.encodeFunctionResult('decimals',[6])});
 assert.equal(await vm.runInContext('initProvider()',initialized.context),100);
@@ -84,7 +142,7 @@ stopped.handler=async request=>{
   return {result:multiIface.encodeFunctionResult('aggregate3',[calls.map(()=>[true,'0x1234'])])};
 };
 await assert.rejects(()=>vm.runInContext("rpcCallRaw(calls,100,'STOP TEST',()=>state.operationAbort.abort())",stopped.context),error=>error.name==='AbortError');
-assert.equal(stopped.requests.length,2,'STOP must prevent the next aggregate from entering the gate');
+assert.equal(stopped.requests.length,3,'STOP must prevent the next aggregate from entering the gate');
 console.log('PASS: 34 non-view quotes use three serial aggregate3 calls at one block; reverts are not retried; missing Multicall uses paced singles; quota errors preserve cooldown without a retry storm.');
 const decimals=harness();
 decimals.context.assets=Array.from({length:20},(_,index)=>({address:address(100+index),symbol:'TOKEN'+index}));
@@ -98,6 +156,7 @@ decimals.handler=async request=>{
 };
 await assert.rejects(()=>vm.runInContext('loadTokenDecimals(assets,100)',decimals.context),/rate limit/);
 const cacheKey='rh-verified-token-decimals-4663-v1';
+assert.equal(decimals.requests.filter(request=>request.payload.method==='eth_getCode').every(request=>request.payload.params[0]===address(6)),true,'decimals should use M3 without probing the quote lens');
 assert.equal(Object.keys(JSON.parse(decimals.storage.get(cacheKey))).length,16,'completed chunk must persist before a later429');
 const resumed=harness();resumed.storage.set(cacheKey,decimals.storage.get(cacheKey));resumed.context.assets=decimals.context.assets;
 resumed.handler=async request=>{
