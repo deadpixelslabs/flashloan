@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Robinhood Flash Loan — Atomic Arbitrage V2</title>
+<title>Robinhood Flash Loan — Atomic Arbitrage V2.1</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 64 64%22><rect width=%2264%22 height=%2264%22 rx=%2214%22 fill=%22%230a0d0b%22/><path d=%22M10 42L23 29l9 8 18-20%22 fill=%22none%22 stroke=%22%2300ff84%22 stroke-width=%226%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22/><circle cx=%2250%22 cy=%2217%22 r=%225%22 fill=%22%2300ff84%22/></svg>">
 <style>
 :root{--bg:#070a08;--panel:#0d120f;--panel2:#111813;--line:#1d2a21;--txt:#f1f7f3;--muted:#8ea198;--green:#00ff84;--green2:#00c86a;--yellow:#ffd166;--red:#ff5c6c;--blue:#70a5ff;--shadow:0 24px 80px rgba(0,0,0,.35)}
@@ -15,7 +15,7 @@
   <div class="topbar">
     <div class="brand">
       <div class="logo"><svg viewBox="0 0 64 64" aria-hidden="true"><path d="M8 44L23 29l10 9 21-24" fill="none" stroke="#00ff84" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/><circle cx="54" cy="14" r="5" fill="#00ff84"/></svg></div>
-      <div class="title"><h1>FLASH LOAN <span style="color:var(--green)">ATOMIC ARB V2</span></h1><p>Robinhood Chain · Morpho flash loans · Uniswap V2/V3 execution</p></div>
+      <div class="title"><h1>FLASH LOAN <span style="color:var(--green)">ATOMIC ARB V2.1</span></h1><p>Robinhood Chain · Morpho flash loans · Uniswap V2/V3 execution</p></div>
     </div>
     <div class="live"><span id="liveDot" class="dot"></span><span id="liveText">OFFLINE</span></div>
   </div>
@@ -37,7 +37,7 @@
         <button class="btn" id="stopBtn" disabled>■ STOP</button>
         <button class="btn warn" id="deepBtn">DEEP SCAN TOP</button>
       </div>
-      <div class="notice"><b>Scanner coverage:</b> exact onchain quotes across Uniswap V2, direct USDG Stock-Token Uniswap V3 pools (0.01% / 0.05% / 0.30% / 1.00%), and discovered Uniswap V4 USDG pools. DEX fees and price impact are already inside the quote. V4 PoolKeys are discovered from a public index, but every V4 amount is re-quoted directly against the official onchain Uniswap V4 Quoter. Scanner gas is provisional. The execution panel checks the complete atomic call and its full gas budget. The scanner uses JSON-RPC batching, automatically caches live route topology, and only re-quotes venues that actually exist after discovery. The first scan is a topology scan; later Shadow scans are much smaller and faster. If the RPC rejects large batches, it automatically splits them into smaller batches instead of stalling.</div>
+      <div class="notice"><b>Scanner coverage:</b> exact onchain quotes across Uniswap V2, direct USDG Stock-Token Uniswap V3 pools (0.01% / 0.05% / 0.30% / 1.00%), and discovered Uniswap V4 USDG pools. DEX fees and price impact are already inside the quote. V4 PoolKeys are discovered from a public index, but every V4 amount is re-quoted directly against the official onchain Uniswap V4 Quoter. Scanner gas is provisional. The execution panel checks the complete atomic call and its full gas budget. The scanner groups up to 16 reads into one verified Multicall request, serializes RPC traffic, and caches verified token metadata for 24 hours. A rate limit pauses requests with a visible countdown. The first scan discovers pools; later scans reuse live routes.</div>
     </section>
 
     <section class="panel p16">
@@ -122,9 +122,10 @@
     <div class="notice">Addresses from <a href="https://docs.morpho.org/developers/contracts/addresses/" target="_blank" rel="noopener" style="color:var(--blue)">Morpho</a> and <a href="https://github.com/Uniswap/contracts/blob/main/deployments/4663.md" target="_blank" rel="noopener" style="color:var(--blue)">Uniswap</a>. Contract source: <a href="https://github.com/deadpixelslabs/flashloan" target="_blank" rel="noopener" style="color:var(--blue)">GitHub</a>. Live liquidity and profitable routes must pass the onchain checks above.</div>
   </section>
 
-  <div class="footer"><span>Canonical USDG: 0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168 · Chain ID 4663</span><span>V2 · Morpho atomic executor · quotes can change before inclusion</span></div>
+  <div class="footer"><span>Canonical USDG: 0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168 · Chain ID 4663</span><span>V2.1 · paced Multicall · automatic RPC cooldown</span></div>
 </div>
 <script src="/vendor/ethers-6.13.4.min.js"></script>
+<script src="/rpc-gate.js"></script>
 <script>
 (() => {
 'use strict';
@@ -147,7 +148,7 @@ const VENUES = [
   ...V3_FEES.map(f=>({key:'V3-'+f,label:'Uni V3 '+(f/10000).toFixed(f===100?2: f===500?2:1)+'%',type:'v3',fee:f}))
 ];
 const els = id => document.getElementById(id);
-const state = { provider:null, assets:[], v4Pools:new Map(), v4PoolCount:0, usdgDecimals:6, latest:[], auto:null, autoTimer:null, scanning:false, db:null, ethUsd:0, gasPriceWei:0n, savedRows:0, filter:'all', streaks:new Map(), scanSeq:0, routeCache:new Map(), quickScanCount:0, lastDurationMs:0, rpcBatchSupported:null };
+const state = { provider:null, assets:[], v4Pools:new Map(), v4PoolCount:0, usdgDecimals:6, latest:[], auto:null, autoTimer:null, scanning:false, loading:false, loadPromise:null, assetsReady:false, operationAbort:null, operationMessage:null, lastError:null, failureCount:0, rpcCooldownUntil:0, nextScanAt:0, autoSession:0, db:null, ethUsd:0, gasPriceWei:0n, savedRows:0, filter:'all', streaks:new Map(), scanSeq:0, routeCache:new Map(), quickScanCount:0, lastDurationMs:0, rpcBatchSupported:null };
 const v2Iface = new ethers.Interface(['function getAmountsOut(uint256 amountIn,address[] path) view returns (uint256[] amounts)']);
 const v3Iface = new ethers.Interface(['function quoteExactInputSingle((address tokenIn,address tokenOut,uint256 amountIn,uint24 fee,uint160 sqrtPriceLimitX96) params) returns (uint256 amountOut,uint160 sqrtPriceX96After,uint32 initializedTicksCrossed,uint256 gasEstimate)']);
 const multiIface = new ethers.Interface(['function aggregate3((address target,bool allowFailure,bytes callData)[] calls) payable returns ((bool success,bytes returnData)[] returnData)']);
@@ -210,44 +211,107 @@ function sortNetRows(a,b){
   const av=Number.isFinite(a.netProfit)?a.netProfit:-Infinity,bv=Number.isFinite(b.netProfit)?b.netProfit:-Infinity;
   return av===bv?b.grossProfit-a.grossProfit:bv-av;
 }
+const scannerRpcRuntime={nextId:1,multicallChecks:new Map(),decimalsVerifiedAt:new Map()};
+function scannerRpcGate(){
+  if(!window.RhRpcGate?.request||!window.RhRpcGate?.provider) throw rpcError('RPC pacing module unavailable. Reload this page.');
+  return window.RhRpcGate;
+}
+function scannerSignal(){return state.operationAbort?.signal;}
+function throwIfScannerAborted(){
+  if(scannerSignal()?.aborted){const error=new Error('Scanner stopped');error.name='AbortError';throw error;}
+}
+async function scannerRpcRequest(method,params){
+  throwIfScannerAborted();
+  const endpoint=resolvedRpcEndpoint();
+  if(endpoint!==state.providerEndpoint) throw rpcError('RPC configuration changed during scan; run the scan again');
+  const payload={jsonrpc:'2.0',id:scannerRpcRuntime.nextId++,method,params};
+  const result=await scannerRpcGate().request(endpoint,payload,{signal:scannerSignal()});
+  if(Array.isArray(result)||!result||Number(result.id)!==payload.id) throw rpcError('RPC omitted or mismatched the requested response');
+  if(result.error){const error=rpcError('RPC '+method+': '+(result.error.message||'unknown error'),{code:result.error.code,data:result.error.data});throw error;}
+  if(!Object.prototype.hasOwnProperty.call(result,'result')) throw rpcError('RPC returned no result for '+method);
+  return result.result;
+}
+function validTokenDecimals(value){return Number.isInteger(value)&&value>=0&&value<=36;}
+function restoreVerifiedDecimals(){
+  if(!state.decimalsCache) state.decimalsCache=new Map();
+  const cutoff=Date.now()-24*60*60*1000;
+  try{
+    const records=JSON.parse(localStorage.getItem('rh-verified-token-decimals-'+CHAIN_ID+'-v1')||'{}');
+    for(const [address,record] of Object.entries(records)){
+      if(record?.chainId===CHAIN_ID&&validTokenDecimals(record.decimals)&&Number.isFinite(record.verifiedAt)&&record.verifiedAt>cutoff&&record.verifiedAt<=Date.now()){
+        state.decimalsCache.set(address.toLowerCase(),record.decimals);scannerRpcRuntime.decimalsVerifiedAt.set(address.toLowerCase(),record.verifiedAt);
+      }
+    }
+  }catch(_e){}
+  for(const address of state.decimalsCache.keys()){
+    const verifiedAt=scannerRpcRuntime.decimalsVerifiedAt.get(address);
+    if(!Number.isFinite(verifiedAt)||verifiedAt<=cutoff){state.decimalsCache.delete(address);scannerRpcRuntime.decimalsVerifiedAt.delete(address);}
+  }
+}
+function persistVerifiedDecimals(){
+  const records={},cutoff=Date.now()-24*60*60*1000;
+  for(const [address,decimals] of state.decimalsCache){
+    const verifiedAt=scannerRpcRuntime.decimalsVerifiedAt.get(address);
+    if(validTokenDecimals(decimals)&&Number.isFinite(verifiedAt)&&verifiedAt>cutoff) records[address]={chainId:CHAIN_ID,decimals,verifiedAt};
+  }
+  try{localStorage.setItem('rh-verified-token-decimals-'+CHAIN_ID+'-v1',JSON.stringify(records));}catch(_e){}
+}
+function rememberVerifiedDecimals(address,decimals){
+  if(!validTokenDecimals(decimals)) return false;
+  state.decimalsCache.set(address.toLowerCase(),decimals);scannerRpcRuntime.decimalsVerifiedAt.set(address.toLowerCase(),Date.now());return true;
+}
+async function scannerMulticallAvailable(blockTag){
+  const cacheKey=state.providerEndpoint+'|'+CHAIN_ID;
+  if(scannerRpcRuntime.multicallChecks.has(cacheKey)) return scannerRpcRuntime.multicallChecks.get(cacheKey);
+  const code=await scannerRpcRequest('eth_getCode',[MULTICALL3,ethers.toQuantity(blockTag)]);
+  const available=typeof code==='string'&&/^0x[0-9a-f]+$/i.test(code)&&code.length>10&&code.toLowerCase().includes('82ad56cb');
+  scannerRpcRuntime.multicallChecks.set(cacheKey,available);
+  log(available?'Multicall3 bytecode verified: 16 quotes share one paced RPC request.':'Multicall3 is unavailable: using paced individual RPC calls.',available?'ok':'dim');
+  return available;
+}
 async function initProvider(){
   const endpoint=resolvedRpcEndpoint();
   if(!state.provider || state.providerEndpoint!==endpoint){
     if(state.provider) state.provider.destroy();
     state.provider=null; state.providerEndpoint=endpoint; state.ethUsd=null; state.gasPriceWei=null;
     state.decimalsCache=new Map(); state.routeCache.clear();
-    const next=new ethers.JsonRpcProvider(endpoint,CHAIN_ID,{staticNetwork:true,batchMaxCount:1,cacheTimeout:0});
-    try{ const cid=Number(BigInt(await next.send('eth_chainId',[]))); if(cid!==CHAIN_ID) throw new Error('Wrong chain ID: '+cid+' (expected '+CHAIN_ID+')'); }
-    catch(e){next.destroy();throw e;}
+    const next=scannerRpcGate().provider(ethers,endpoint,{getSignal:scannerSignal});
+    try{const cid=Number(BigInt(await next.send('eth_chainId',[])));if(cid!==CHAIN_ID) throw new Error('Wrong chain ID: '+cid+' (expected '+CHAIN_ID+')');}
+    catch(error){next.destroy();throw error;}
     state.provider=next;
   }
   const cid=Number(BigInt(await state.provider.send('eth_chainId',[])));
   if(cid!==CHAIN_ID){state.provider.destroy();state.provider=null;throw new Error('RPC chain changed: '+cid+' (expected '+CHAIN_ID+')');}
   const block=Number(BigInt(await state.provider.send('eth_blockNumber',[])));
-  if(!state.decimalsCache) state.decimalsCache=new Map();
+  restoreVerifiedDecimals();
   if(!state.decimalsCache.has(USDG.toLowerCase())){
-    const ret=await state.provider.send('eth_call',[{to:USDG,data:erc20Iface.encodeFunctionData('decimals',[])},ethers.toQuantity(block)]);
-    const decimals=Number(erc20Iface.decodeFunctionResult('decimals',ret)[0]);
-    if(!Number.isInteger(decimals)||decimals<0||decimals>36) throw new Error('USDG decimals are invalid');
-    state.decimalsCache.set(USDG.toLowerCase(),decimals);
+    const result=await state.provider.send('eth_call',[{to:USDG,data:erc20Iface.encodeFunctionData('decimals',[])},ethers.toQuantity(block)]);
+    const decimals=Number(erc20Iface.decodeFunctionResult('decimals',result)[0]);
+    if(!rememberVerifiedDecimals(USDG,decimals)) throw new Error('USDG decimals are invalid');
+    persistVerifiedDecimals();
   }
   state.usdgDecimals=state.decimalsCache.get(USDG.toLowerCase());
-  els('chainStatus').textContent='Chain '+cid+' · block '+block.toLocaleString(); setLive(true,'CHAIN '+cid);
+  els('chainStatus').textContent='Chain '+cid+' · block '+block.toLocaleString();setLive(true,'CHAIN '+cid);
   return block;
 }
 async function loadTokenDecimals(assets,block){
-  if(!state.decimalsCache) state.decimalsCache=new Map();
-  const missing=assets.filter(a=>!state.decimalsCache.has(a.address.toLowerCase()));
-  if(missing.length){
-    const calls=missing.map(a=>({target:a.address,callData:erc20Iface.encodeFunctionData('decimals',[]),meta:{symbol:a.symbol,address:a.address,type:'decimals'}}));
-    const results=await rpcCallRaw(calls,block,'TOKEN DECIMALS');
+  restoreVerifiedDecimals();
+  const missing=assets.filter(asset=>!state.decimalsCache.has(assetKey(asset)));
+  const applyChunk=results=>{
+    let changed=false;
     for(const result of results){
       if(!result.success) continue;
-      try{const decimals=Number(erc20Iface.decodeFunctionResult('decimals',result.returnData)[0]);if(Number.isInteger(decimals)&&decimals>=0&&decimals<=36) state.decimalsCache.set(result.meta.address.toLowerCase(),decimals);}catch(_e){}
+      try{const decimals=Number(erc20Iface.decodeFunctionResult('decimals',result.returnData)[0]);changed=rememberVerifiedDecimals(result.meta.address,decimals)||changed;}catch(_e){}
     }
+    if(changed) persistVerifiedDecimals();
+  };
+  if(missing.length){
+    const calls=missing.map(asset=>({target:asset.address,callData:erc20Iface.encodeFunctionData('decimals',[]),meta:{symbol:asset.symbol,address:asset.address,type:'decimals'}}));
+    const results=await rpcCallRaw(calls,block,'TOKEN DECIMALS',applyChunk);
+    applyChunk(results);
   }
-  for(const asset of assets){asset.decimals=state.decimalsCache.get(asset.address.toLowerCase());asset.decimalsVerified=Number.isInteger(asset.decimals);}
-  const verified=assets.filter(a=>a.decimalsVerified);
+  for(const asset of assets){asset.decimals=state.decimalsCache.get(assetKey(asset));asset.decimalsVerified=validTokenDecimals(asset.decimals);}
+  const verified=assets.filter(asset=>asset.decimalsVerified);
   if(verified.length!==assets.length) log((assets.length-verified.length)+' tokens skipped: onchain decimals unavailable.','err');
   return verified;
 }
@@ -284,93 +348,95 @@ async function loadV4Pools(){
   log('Discovered '+state.v4PoolCount+' direct USDG V4 PoolKeys across '+bySymbol.size+' Stock Tokens.','ok');
 }
 
-async function loadAssets(){
+function scannerError(error,prefix){
+  if(error?.name==='AbortError'||error?.code==='ABORT_ERR'||error?.code==='CANCELLED'){
+    state.lastError=null;log('Operation stopped.','dim');return;
+  }
+  state.lastError=prefix+': '+(error.shortMessage||error.message||String(error));
+  state.failureCount=Math.min(5,(state.failureCount||0)+1);
+  if(error.rpcRateLimited||error.status===429){
+    state.rpcCooldownUntil=Math.max(state.rpcCooldownUntil||0,error.retryAt||Date.now()+15000);
+    log('RPC rate limit reached. Requests paused; verified metadata remains cached.','err');
+  }else log(state.lastError,'err');
+}
+async function loadAssets(options={}){
+  const internal=options?.internal===true;
+  if(state.loading)return state.loadPromise;
+  if(state.scanning&&!internal){log('Wait for the current scan before loading assets.','dim');return false;}
+  state.loading=true;state.lastError=null;
+  const ownsAbort=!internal;
+  if(ownsAbort)state.operationAbort=new AbortController();
   disableBusy(true,'Loading official registry…');
-  try{
-    const block=await initProvider();
-    let raw;
-    try{ raw=await fetchJSON(ASSET_API,ASSET_API_DIRECT,'Official asset registry'); localStorage.setItem('rh-assets-cache',JSON.stringify(raw)); }
-    catch(e){ const cache=localStorage.getItem('rh-assets-cache'); if(!cache) throw new Error('Official asset registry failed and no cache exists: '+e.message+' — deploy V1.3 together with vercel.json.'); raw=JSON.parse(cache); log('Official asset API unavailable; using cached registry.','err'); }
-    const list=(raw.assets||[]).map(a=>{const dep=(a.deployments||[]).find(d=>Number(d.chainId)===CHAIN_ID); return dep?{symbol:a.tokenSymbol,name:a.tokenName,address:dep.contractAddress,multiplier:Number(a.currentMultiplier||1),status:a.status,logoUrl:a.logoUrl||'',tradingCapabilities:a.tradingCapabilities||{}}:null;}).filter(Boolean).filter(a=>!a.status||a.status==='ASSET_STATUS_ACTIVE');
-    state.assets=await loadTokenDecimals(list,block); els('mAssets').textContent=state.assets.length;
-    restoreLiveRoutes();
-    await loadV4Pools();
-    els('assetStatus').textContent=state.assets.length+' active · '+state.v4PoolCount+' V4 PoolKeys'; log('Loaded '+state.assets.length+' verified Stock Tokens.','ok');
-  }catch(e){ log(e.message,'err'); els('assetStatus').textContent='Load failed · see log'; setLive(false,'ERROR'); }
-  finally{disableBusy(false);}
+  const job=(async()=>{
+    try{
+      const block=await initProvider();
+      let raw;
+      try{raw=await fetchJSON(ASSET_API,ASSET_API_DIRECT,'Official asset registry');localStorage.setItem('rh-assets-cache',JSON.stringify(raw));}
+      catch(error){const cache=localStorage.getItem('rh-assets-cache');if(!cache)throw new Error('Official asset registry failed: '+error.message);raw=JSON.parse(cache);log('Official asset API unavailable; using cached registry.','err');}
+      if(state.operationAbort?.signal.aborted)throw new DOMException('Operation stopped','AbortError');
+      const list=(raw.assets||[]).map(a=>{const deployment=(a.deployments||[]).find(d=>Number(d.chainId)===CHAIN_ID);return deployment?{symbol:a.tokenSymbol,name:a.tokenName,address:deployment.contractAddress,multiplier:Number(a.currentMultiplier||1),status:a.status,logoUrl:a.logoUrl||'',tradingCapabilities:a.tradingCapabilities||{}}:null;}).filter(Boolean).filter(a=>!a.status||a.status==='ASSET_STATUS_ACTIVE');
+      els('assetStatus').textContent=list.length+' registry tokens · verifying metadata';
+      state.assets=await loadTokenDecimals(list,block);
+      if(!state.assets.length)throw new Error('No token metadata could be verified. Retry after the RPC recovers.');
+      els('mAssets').textContent=state.assets.length;
+      restoreLiveRoutes();await loadV4Pools();
+      if(state.operationAbort?.signal.aborted)throw new DOMException('Operation stopped','AbortError');
+      state.assetsReady=true;
+      els('assetStatus').textContent=state.assets.length+' verified · '+state.v4PoolCount+' V4 pools';
+      log('Loaded '+state.assets.length+' verified Stock Tokens. Metadata is cached for 24 hours.','ok');
+      return true;
+    }catch(error){
+      state.assetsReady=false;
+      els('assetStatus').textContent=error?.name==='AbortError'?'Load stopped · verified metadata saved':'Metadata incomplete · cached progress kept';
+      if(internal)throw error;
+      scannerError(error,'LOAD ERROR');return false;
+    }finally{
+      state.loading=false;state.loadPromise=null;
+      if(ownsAbort)state.operationAbort=null;
+      disableBusy(false);
+    }
+  })();
+  state.loadPromise=job;
+  return job;
 }
 
 async function rpcBatchPost(items,blockTag,idBase=1){
-  const tag=ethers.toQuantity(blockTag);
-  if(resolvedRpcEndpoint()!==state.providerEndpoint) throw rpcError('RPC configuration changed during scan; run the scan again');
-  const payload=items.map((x,i)=>({jsonrpc:'2.0',id:idBase+i,method:'eth_call',params:[{to:x.target,data:x.callData},tag]}));
-  const controller=new AbortController(); const timer=setTimeout(()=>controller.abort(),10000);
-  try{
-    const response=await fetch(state.providerEndpoint,{method:'POST',headers:{'content-type':'application/json','accept':'application/json'},body:JSON.stringify(payload),signal:controller.signal,cache:'no-store'});
-    if(!response.ok) throw rpcError('RPC HTTP '+response.status,{batchLimit:response.status===413});
-    let records;
-    try{records=await response.json();}catch(_e){throw rpcError('RPC returned non-JSON data; check the same-origin proxy and endpoint');}
-    if(!Array.isArray(records)){
-      const reason=records?.error?.message||'response is not an array';
-      throw rpcError('RPC batch rejected: '+reason,{batchLimit:/batch|invalid request|too many|limit.*request/i.test(reason)||records?.error?.code===-32600});
-    }
-    const byId=new Map(records.map(x=>[Number(x.id),x]));
-    return items.map((item,i)=>{
-      const rec=byId.get(idBase+i);
-      if(!rec) throw rpcError('RPC batch omitted response '+(idBase+i));
-      if(typeof rec.result==='string') return {success:true,returnData:rec.result,meta:item.meta};
-      if(isQuoteRevert(rec.error)) return {success:false,returnData:'0x',meta:item.meta,error:rec.error?.message||'Quote reverted'};
-      throw rpcError('RPC quote infrastructure error: '+(rec.error?.message||'missing result'),{batchLimit:/batch.*limit|too many.*request/i.test(rec.error?.message||'')});
-    });
-  }catch(e){
-    if(e.name==='AbortError') throw rpcError('RPC batch timed out after 10 seconds');
-    if(e.rpcInfrastructure) throw e;
-    throw rpcError('RPC request failed: '+e.message);
-  }finally{clearTimeout(timer);}
+  if(!items.length) return [];
+  const encoded=multiIface.encodeFunctionData('aggregate3',[items.map(item=>[item.target,true,item.callData])]);
+  // aggregate3 executes ordinary CALLs inside eth_call, supporting non-view V3/V4 quoters.
+  const result=await scannerRpcRequest('eth_call',[{to:MULTICALL3,data:encoded,gas:'0x1c9c380'},ethers.toQuantity(blockTag)]);
+  let decoded;
+  try{decoded=multiIface.decodeFunctionResult('aggregate3',result)[0];}catch(_e){throw rpcError('Multicall3 returned invalid aggregate3 data');}
+  if(decoded.length!==items.length) throw rpcError('Multicall3 result count did not match the requested quotes');
+  return items.map((item,index)=>({success:Boolean(decoded[index].success??decoded[index][0]),returnData:decoded[index].returnData??decoded[index][1],meta:item.meta}));
 }
 async function rpcSingle(item,blockTag){
-  let timer;
   try{
-    const request=state.provider.send('eth_call',[{to:item.target,data:item.callData},ethers.toQuantity(blockTag)]);
-    const timeout=new Promise((_,reject)=>{timer=setTimeout(()=>reject(rpcError('eth_call timed out after 8 seconds')),8000);});
-    const result=await Promise.race([request,timeout]);
+    const result=await scannerRpcRequest('eth_call',[{to:item.target,data:item.callData},ethers.toQuantity(blockTag)]);
     return {success:true,returnData:result,meta:item.meta};
-  }catch(e){
-    if(isQuoteRevert(e)) return {success:false,returnData:'0x',meta:item.meta,error:e.shortMessage||e.message};
-    throw rpcError('RPC single call failed: '+(e.shortMessage||e.message));
-  }finally{clearTimeout(timer);}
-}
-async function rpcBatchWithFallback(items,blockTag,idBase){
-  try{const result=await rpcBatchPost(items,blockTag,idBase);state.rpcBatchSupported=true;return result;}
-  catch(e){
-    if(!e.batchLimit) throw e;
-    if(items.length<=1){state.rpcBatchSupported=false;return [await rpcSingle(items[0],blockTag)];}
-    const mid=Math.ceil(items.length/2);
-    // Split only explicit batch-limit failures, sequentially to keep the outer worker concurrency bounded.
-    const first=await rpcBatchWithFallback(items.slice(0,mid),blockTag,idBase);
-    const second=await rpcBatchWithFallback(items.slice(mid),blockTag,idBase+mid);
-    return first.concat(second);
+  }catch(error){
+    if(isQuoteRevert(error)) return {success:false,returnData:'0x',meta:item.meta,error:error.shortMessage||error.message};
+    throw error;
   }
 }
-
-async function rpcCallRaw(callObjects,blockTag,phase='QUOTE'){
+async function rpcBatchWithFallback(items,blockTag,idBase,onChunk){
+  if(await scannerMulticallAvailable(blockTag)){const results=await rpcBatchPost(items,blockTag,idBase);if(onChunk) onChunk(results);return results;}
+  const results=[];
+  for(const item of items){throwIfScannerAborted();const result=await rpcSingle(item,blockTag);results.push(result);if(onChunk) onChunk([result]);}
+  return results;
+}
+async function rpcCallRaw(callObjects,blockTag,phase='QUOTE',onChunk){
   if(!callObjects.length) return [];
-  const batchSize=40, parallelBatches=3;
-  const groups=chunks(callObjects,batchSize); const results=new Array(groups.length);
-  let cursor=0,done=0,ok=0,lastLogged=0;
-  log(phase+': '+callObjects.length+' eth_calls · JSON-RPC batches '+batchSize+' × '+parallelBatches+' parallel','dim');
-  async function worker(){
-    while(true){
-      const idx=cursor++; if(idx>=groups.length) return;
-      const g=groups[idx]; const res=await rpcBatchWithFallback(g,blockTag,1+idx*batchSize);
-      results[idx]=res; done+=g.length; ok+=res.reduce((n,x)=>n+(x.success?1:0),0);
-      if(done===callObjects.length || done-lastLogged>=Math.max(120,batchSize*parallelBatches)){
-        lastLogged=done; log(phase+' progress '+done+'/'+callObjects.length+' · '+ok+' RPC-success','dim');
-      }
-    }
+  const results=[],groups=chunks(callObjects,16);
+  let done=0,ok=0;
+  log(phase+': '+callObjects.length+' quotes · up to 16 per Multicall3 · one paced RPC request at a time','dim');
+  for(let index=0;index<groups.length;index++){
+    throwIfScannerAborted();
+    const group=await rpcBatchWithFallback(groups[index],blockTag,1+index*16,onChunk);
+    results.push(...group);done+=group.length;ok+=group.filter(result=>result.success).length;
+    log(phase+' progress '+done+'/'+callObjects.length+' · '+ok+' successful quotes','dim');
   }
-  await Promise.all(Array.from({length:Math.min(parallelBatches,groups.length)},worker));
-  return results.flat();
+  return results;
 }
 function buildQuoteCalls(assets,amountRaw,direction,buyAmountsBySymbol,routeFilter=null){
   const calls=[];
@@ -552,27 +618,39 @@ async function scanAtSize(assets,size,scanType='quick',save=true,render=true){
 }
 
 async function runQuick(auto=false){
-  if(state.scanning){log('Scan skipped: previous scan still running.','dim');return;}
-  state.scanning=true; disableBusy(true,auto?'Shadow scan running…':'Scan running…');
+  if(state.scanning||state.loading){log('Scan skipped: another load or scan is running.','dim');return false;}
+  state.scanning=true;state.lastError=null;state.operationAbort=new AbortController();
+  disableBusy(true,auto?'Shadow scan running…':'Scan running…');
   try{
-    if(!state.assets.length){await loadAssets(); if(!state.assets.length)return;}
-    const size=Math.max(1,Number(els('quickSize').value)||1000); const started=Date.now(); const rows=await scanAtSize(state.assets,size,'quick',true,true);
-    const routable=rows.length, gross=rows.filter(r=>r.grossProfit>0).length, net=rows.filter(r=>r.netProfit>0).length, best=rows[0]||null;
-    await idbAddMany('summaries',[{timestamp:nowIso(),scanType:'quick',size,assetsLoaded:state.assets.length,routable,positiveGross:gross,positiveNet:net,bestSymbol:best?.symbol||null,bestNetProfit:best?.netProfit||null,bestNetRoi:best?.netRoi||null,durationMs:Date.now()-started,rpcHost:safeHost(els('rpc').value),v4Included:state.v4PoolCount>0}]);
-    state.lastDurationMs=Date.now()-started;
-    log('Done in '+(state.lastDurationMs/1000).toFixed(1)+'s: '+routable+' routable · '+gross+' gross+ · '+net+' net+ · best '+(best?best.symbol+' '+money(best.netProfit):'none'),net?'ok':'dim');
-  }catch(e){log('SCAN ERROR: '+(e.shortMessage||e.message),'err');}
-  finally{state.scanning=false;disableBusy(false);}
+    if(!state.assetsReady){const loaded=await loadAssets({internal:true});if(!loaded)return false;disableBusy(true,'Scan running…');}
+    const size=Math.max(1,Number(els('quickSize').value)||1000),started=Date.now();
+    const rows=await scanAtSize(state.assets,size,'quick',true,true);
+    const routable=rows.length,gross=rows.filter(r=>r.grossProfit>0).length,net=rows.filter(r=>r.netProfit>0).length,best=rows[0]||null;
+    await idbAddMany('summaries',[{timestamp:nowIso(),scanType:'quick',size,assetsLoaded:state.assets.length,routable,positiveGross:gross,positiveNet:net,bestSymbol:best?.symbol||null,bestNetProfit:best?.netProfit??null,bestNetRoi:best?.netRoi??null,durationMs:Date.now()-started,rpcHost:safeHost(els('rpc').value),v4Included:state.v4PoolCount>0}]);
+    state.lastDurationMs=Date.now()-started;state.failureCount=0;state.lastError=null;
+    log('Done in '+(state.lastDurationMs/1000).toFixed(1)+'s: '+routable+' route pairs · '+gross+' gross+ · '+net+' net+ · best '+(best?best.symbol+' '+money(best.netProfit):'none'),net?'ok':'dim');
+    return true;
+  }catch(error){scannerError(error,'SCAN ERROR');return false;}
+  finally{state.scanning=false;state.operationAbort=null;disableBusy(false);}
 }
-
 async function runDeep(){
-  if(state.scanning)return; if(!state.assets.length){await loadAssets();if(!state.assets.length)return;}
-  let targets=[...new Set(state.latest.filter(r=>r.grossPct>-0.10).map(r=>r.address.toLowerCase()))].slice(0,6); if(!targets.length) targets=[...new Set(state.latest.map(r=>r.address.toLowerCase()))].slice(0,5); if(!targets.length){log('Run Quick Scan first.','err');return;}
-  const sizes=els('deepSizes').value.split(',').map(x=>Number(x.trim())).filter(x=>x>0).slice(0,12); if(!sizes.length)return;
-  state.scanning=true;disableBusy(true,'Deep scan running…');
-  try{ const subset=state.assets.filter(a=>targets.includes(assetKey(a))); let all=[]; for(const size of sizes){ const rows=await scanAtSize(subset,size,'deep',true,false); all.push(...rows); await sleep(120); }
-    all.sort(sortNetRows); state.latest=all;renderTable();updateMetrics(all); await idbAddMany('summaries',[{timestamp:nowIso(),scanType:'deep',sizes,targets,rows:all.length,positiveNet:all.filter(r=>r.netProfit>0).length,bestSymbol:all[0]?.symbol||null,bestNetProfit:all[0]?.netProfit||null,v4Included:state.v4PoolCount>0}]); log('Deep scan complete: '+all.length+' route-size observations.','ok');
-  }catch(e){log('DEEP ERROR: '+(e.shortMessage||e.message),'err');} finally{state.scanning=false;disableBusy(false);}
+  if(state.scanning||state.loading)return;
+  state.scanning=true;state.lastError=null;state.operationAbort=new AbortController();
+  disableBusy(true,'Deep scan running…');
+  try{
+    if(!state.assetsReady){const loaded=await loadAssets({internal:true});if(!loaded)return;}
+    let targets=[...new Set(state.latest.filter(r=>r.grossPct>-0.10).map(r=>r.address.toLowerCase()))].slice(0,6);
+    if(!targets.length)targets=[...new Set(state.latest.map(r=>r.address.toLowerCase()))].slice(0,5);
+    if(!targets.length){log('Run Quick Scan first.','err');return;}
+    const sizes=els('deepSizes').value.split(',').map(x=>Number(x.trim())).filter(x=>x>0).slice(0,12);
+    if(!sizes.length)return;
+    const subset=state.assets.filter(a=>targets.includes(a.address.toLowerCase()));let all=[];
+    for(const size of sizes){if(state.operationAbort.signal.aborted)throw new DOMException('Operation stopped','AbortError');all.push(...await scanAtSize(subset,size,'deep',true,false));}
+    all.sort(sortNetRows);state.latest=all;renderTable();updateMetrics(all);
+    await idbAddMany('summaries',[{timestamp:nowIso(),scanType:'deep',sizes,targets,rows:all.length,positiveNet:all.filter(r=>r.netProfit>0).length,bestSymbol:all[0]?.symbol||null,bestNetProfit:all[0]?.netProfit??null,v4Included:state.v4PoolCount>0}]);
+    state.failureCount=0;state.lastError=null;log('Deep scan complete: '+all.length+' route-size observations.','ok');
+  }catch(error){scannerError(error,'DEEP ERROR');}
+  finally{state.scanning=false;state.operationAbort=null;disableBusy(false);}
 }
 
 function safeHost(url){try{return new URL(url).host}catch(_){return 'custom';}}
@@ -584,17 +662,60 @@ function renderTable(){
   const rows=currentRows(); if(!rows.length){els('tbody').innerHTML='<tr><td colspan="16" style="text-align:center;color:var(--muted);padding:34px">No rows match this filter.</td></tr>';return;}
   els('tbody').innerHTML=rows.slice(0,500).map(r=>{ const [st,cl]=statusFor(r); const ref=r.refDeviationPct==null?'—':pct(r.refDeviationPct,2); return `<tr><td>${new Date(r.timestamp).toLocaleTimeString()}</td><td><span class="ticker">${escapeHtml(r.symbol)}</span></td><td>${money(r.size)}</td><td class="venue">${escapeHtml(r.buyVenueLabel)}</td><td class="venue">${escapeHtml(r.sellVenueLabel)}</td><td>${fmt(r.buyTokenQty,6)}</td><td>${fmt(r.sellOutUsdg,2)} USDG</td><td class="${r.grossProfit>0?'green':'red'}">${money(r.grossProfit)} · ${pct(r.grossPct)}</td><td>${money(r.gasUsd)}</td><td>${money(r.safetyBufferUsd)}</td><td class="${r.netProfit>0?'green':'red'}"><b>${money(r.netProfit)}</b></td><td class="${r.netRoi>0?'green':'red'}">${pct(r.netRoi)}</td><td>${ref}</td><td><span class="score">${r.score}</span></td><td><span class="badge ${cl}">${st}</span></td><td>${Number(r.block).toLocaleString()}</td></tr>`; }).join('');
 }
-function disableBusy(busy,text){ ['loadBtn','scanBtn','deepBtn'].forEach(id=>els(id).disabled=busy); if(busy&&text) setLive(true,text.toUpperCase()); else if(state.auto) setLive(true,'SHADOW ACTIVE'); else if(state.provider) setLive(true,'CHAIN 4663'); }
-
-async function shadowLoop(){
-  if(!state.auto)return;
-  await runQuick(true);
-  if(!state.auto)return;
-  const sec=Math.max(5,Number(els('interval').value)||30);
-  state.autoTimer=setTimeout(shadowLoop,sec*1000);
+function renderScannerStatus(){
+  if(state.rpcCooldownUntil&&state.rpcCooldownUntil<=Date.now())state.rpcCooldownUntil=0;
+  const busy=state.scanning||state.loading;
+  const cooldown=Math.max(0,Math.ceil(((state.rpcCooldownUntil||0)-Date.now())/1000));
+  ['loadBtn','scanBtn','deepBtn'].forEach(id=>els(id).disabled=busy||cooldown>0);
+  els('startBtn').disabled=busy||!!state.auto||cooldown>0;
+  els('stopBtn').disabled=!busy&&!state.auto;
+  els('rpc').disabled=busy;
+  if(cooldown){setLive(false,'RPC PAUSED · '+cooldown+'s');return;}
+  if(busy){setLive(true,state.operationMessage||'WORKING');return;}
+  if(state.lastError){setLive(false,state.auto?'RETRY WAIT · '+Math.max(0,Math.ceil((state.nextScanAt-Date.now())/1000))+'s':'RPC ERROR · SEE LOG');return;}
+  if(state.auto){setLive(true,'NEXT SCAN · '+Math.max(0,Math.ceil((state.nextScanAt-Date.now())/1000))+'s');return;}
+  setLive(!!state.provider,state.provider?'CHAIN 4663 · IDLE':'OFFLINE');
 }
-function startShadow(){ if(state.auto)return; state.auto=true; els('startBtn').disabled=true;els('stopBtn').disabled=false;setLive(true,'SHADOW ACTIVE');log('Shadow Mode started. Next scan begins after each completed scan + selected interval.','ok'); shadowLoop(); }
-function stopShadow(){ state.auto=false; if(state.autoTimer)clearTimeout(state.autoTimer); state.autoTimer=null;els('startBtn').disabled=false;els('stopBtn').disabled=true;setLive(!!state.provider,state.provider?'CHAIN 4663':'OFFLINE');log('Shadow Mode stopped.','dim'); }
+function disableBusy(busy,text){
+  if(busy&&text)state.operationMessage=text.toUpperCase();
+  if(!state.scanning&&!state.loading)state.operationMessage=null;
+  renderScannerStatus();
+}
+function scheduleShadow(session,delay){
+  if(!state.auto||session!==state.autoSession)return;
+  if(state.autoTimer)clearTimeout(state.autoTimer);
+  state.nextScanAt=Date.now()+delay;
+  state.autoTimer=setTimeout(()=>shadowLoop(session),delay);
+  renderScannerStatus();
+}
+async function shadowLoop(session=state.autoSession){
+  if(!state.auto||session!==state.autoSession)return;
+  if(state.scanning||state.loading){scheduleShadow(session,1000);return;}
+  const cooldown=Math.max(0,(state.rpcCooldownUntil||0)-Date.now());
+  if(cooldown>0){scheduleShadow(session,cooldown+250);return;}
+  await runQuick(true);
+  if(!state.auto||session!==state.autoSession)return;
+  const interval=Math.max(5,Number(els('interval').value)||30)*1000;
+  const errorDelay=state.lastError?Math.min(120000,15000*2**Math.max(0,state.failureCount-1)):0;
+  scheduleShadow(session,Math.max(interval,errorDelay,(state.rpcCooldownUntil||0)-Date.now()+250));
+}
+function startShadow(){
+  if(state.auto||state.scanning||state.loading)return;
+  state.auto=true;state.autoSession++;state.lastError=null;
+  log('Shadow Mode started. One load or scan runs at a time; RPC quota pauses are respected.','ok');
+  shadowLoop(state.autoSession);
+}
+function stopShadow(){
+  state.auto=false;state.autoSession++;state.nextScanAt=0;
+  if(state.autoTimer)clearTimeout(state.autoTimer);state.autoTimer=null;
+  state.operationAbort?.abort();
+  renderScannerStatus();log('Stop requested. Pending scanner requests are cancelled.','dim');
+}
+window.addEventListener('rh:rpc-status',event=>{
+  state.rpcCooldownUntil=event.detail.cooldownUntil||0;
+  renderScannerStatus();
+});
+setInterval(()=>{if(state.rpcCooldownUntil||state.auto||state.scanning||state.loading)renderScannerStatus();},1000);
 
 function downloadBlob(name,text,type){ const blob=new Blob([text],{type}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},800); }
 function csvEscape(v){ if(v===null||v===undefined)return ''; const s=typeof v==='object'?JSON.stringify(v):String(v); return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s; }
@@ -603,8 +724,8 @@ async function exportJSON(){ const rows=await idbAll('rows'), summaries=await id
 
 els('loadBtn').onclick=loadAssets; els('scanBtn').onclick=()=>runQuick(false); els('startBtn').onclick=startShadow; els('stopBtn').onclick=stopShadow; els('deepBtn').onclick=runDeep; els('csvBtn').onclick=exportCSV; els('jsonBtn').onclick=exportJSON; els('clearBtn').onclick=async()=>{ if(!confirm('Delete all locally saved scanner history?'))return; await idbClear();state.savedRows=0;els('mSaved').textContent='0';log('History cleared.','dim');}; els('search').oninput=renderTable;
 els('tabs').addEventListener('click',e=>{const t=e.target.closest('.tab');if(!t)return;document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));t.classList.add('active');state.filter=t.dataset.filter;renderTable();});
-window.addEventListener('beforeunload',()=>{if(state.auto)clearInterval(state.auto)});
-(async()=>{ try{state.db=await openDB();state.savedRows=await idbCount('rows');els('mSaved').textContent=state.savedRows.toLocaleString();log('Local database ready. '+state.savedRows+' historical rows found.','ok'); const cache=localStorage.getItem('rh-assets-cache'); if(cache){ try{const raw=JSON.parse(cache); const list=(raw.assets||[]).map(a=>{const dep=(a.deployments||[]).find(d=>Number(d.chainId)===CHAIN_ID);return dep?{symbol:a.tokenSymbol,name:a.tokenName,address:dep.contractAddress,multiplier:Number(a.currentMultiplier||1),status:a.status,logoUrl:a.logoUrl||'',tradingCapabilities:a.tradingCapabilities||{}}:null}).filter(Boolean).filter(a=>!a.status||a.status==='ASSET_STATUS_ACTIVE');state.assets=list;els('mAssets').textContent=list.length;els('assetStatus').textContent=list.length+' cached tokens · click LOAD to refresh';}catch(_){}} }catch(e){log('IndexedDB failed: '+e.message,'err');} })();
+window.addEventListener('beforeunload',()=>{state.operationAbort?.abort();if(state.autoTimer)clearTimeout(state.autoTimer);});
+(async()=>{ try{state.db=await openDB();state.savedRows=await idbCount('rows');els('mSaved').textContent=state.savedRows.toLocaleString();log('Local database ready. '+state.savedRows+' historical rows found.','ok'); const cache=localStorage.getItem('rh-assets-cache'); if(cache){ try{const raw=JSON.parse(cache); const list=(raw.assets||[]).map(a=>{const dep=(a.deployments||[]).find(d=>Number(d.chainId)===CHAIN_ID);return dep?{symbol:a.tokenSymbol,name:a.tokenName,address:dep.contractAddress,multiplier:Number(a.currentMultiplier||1),status:a.status,logoUrl:a.logoUrl||'',tradingCapabilities:a.tradingCapabilities||{}}:null}).filter(Boolean).filter(a=>!a.status||a.status==='ASSET_STATUS_ACTIVE');state.assets=list;state.assetsReady=false;els('mAssets').textContent=list.length;els('assetStatus').textContent=list.length+' cached tokens · click LOAD to refresh';}catch(_){}} }catch(e){log('IndexedDB failed: '+e.message,'err');} })();
 })();
 </script>
 <script src="/execution.js"></script>

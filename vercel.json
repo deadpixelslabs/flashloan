@@ -44,6 +44,6 @@
     }
   ],
   "installCommand": "node --version",
-  "buildCommand": "node --check execution.js",
+  "buildCommand": "node --check execution.js && node --check rpc-gate.js",
   "outputDirectory": "."
 }

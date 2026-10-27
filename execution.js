@@ -52,7 +52,8 @@
     const endpoint=raw===OFFICIAL_RPC ? new URL('/proxy/rpc',location.href).href : raw;
     if(!s.provider || endpoint!==s.rpc) {
       if(s.provider) s.provider.destroy();
-      s.provider=new ethers.JsonRpcProvider(endpoint,undefined,{batchMaxCount:1,cacheTimeout:-1});
+      if(!window.RhRpcGate)throw Error('RPC request manager unavailable. Reload this page.');
+      s.provider=window.RhRpcGate.provider(ethers,endpoint);
       s.rpc=endpoint;
     }
     const cid=BigInt(await s.provider.send('eth_chainId',[]));

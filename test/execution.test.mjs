@@ -36,7 +36,7 @@ function harness(options = {}) {
   element('executionSlippage').value = '10';
   element('executionMinProfit').value = '1';
   element('executionMaxGas').value = '0.0002';
-  const calls=[];
+  const calls=[],gateProviders=[];
   let sent=0;
   const block = {number:'0x64',hash:'0x'+'44'.repeat(32),timestamp:ethers.toQuantity(Math.floor(Date.now()/1000))};
   function replacementCost(amount,route) {
@@ -54,7 +54,7 @@ function harness(options = {}) {
     return amount*101n/(200n*10n**12n);
   }
   class Provider {
-    destroy(){}
+    destroy(){this.destroyed=true;}
     async send(method,args) {
       calls.push([method,args]);
       if(method==='eth_chainId') return options.wrongChain?'0x1':'0x1237';
@@ -107,6 +107,9 @@ function harness(options = {}) {
     async expectedChainId(){return 4663n;}
   }
   const window = {
+    RhRpcGate:options.missingGate?undefined:{provider(namespace,endpoint){
+      const provider=new Provider();gateProviders.push({namespace,endpoint,provider});return provider;
+    }},
     ethereum:{
       async request({method}){if(method==='eth_chainId')return '0x1237';if(method==='eth_accounts')return [account];throw Error(method);},
       on(name,fn){handlers.set(name,fn);}
@@ -114,7 +117,7 @@ function harness(options = {}) {
     addEventListener(name,fn){handlers.set(name,fn);}
   };
   const context=vm.createContext({
-    ethers:{...ethers,JsonRpcProvider:Provider,Contract},window,
+    ethers:{...ethers,JsonRpcProvider:class {constructor(){throw Error('Direct RPC provider bypassed the shared gate.');}},Contract},window,
     document:{getElementById:element,createElement:()=>element(Symbol())},
     location:{href:'https://example.test/'},URL,BigInt,Date,Error,console,
     localStorage:{getItem(){return null;},setItem(){}},
@@ -127,7 +130,7 @@ function harness(options = {}) {
   api.s.account=account;
   api.s.signer={async sendTransaction(){sent++;return {hash:'0x'+'ab'.repeat(32),async wait(){return {status:1};}};}};
   api.s.rows=[{symbol:'TEST',address:token,size:1000,amountInRaw:'1000000000',buyVenue:'V2',sellVenue:'V3-500',buyRoute:{type:'v2'},sellRoute:{type:'v3',fee:500}}];
-  return {api,elements,calls,handlers,get sent(){return sent;}};
+  return {api,elements,calls,handlers,gateProviders,get sent(){return sent;}};
 }
 
 test('preflight encodes the contract ABI and raises minimum profit to cover the whole gas budget',async()=>{
@@ -198,4 +201,19 @@ test('runtime verification rejects malformed, truncated and inconsistent immutab
   const h=harness();assert.throws(()=>h.api.maskedRuntime('0x123',{}),/Invalid/);
   assert.throws(()=>h.api.maskedRuntime('0x6000',{x:[{start:10,length:32}]}),/Truncated/);
   assert.throws(()=>h.api.maskedRuntime('0x11112222',{x:[{start:0,length:2},{start:2,length:2}]}),/inconsistent/);
+});
+
+test('execution RPC uses and reuses the shared gate and replaces it on endpoint change',async()=>{
+  const h=harness();const first=await h.api.provider();
+  assert.equal(await h.api.provider(),first);assert.equal(h.gateProviders.length,1);
+  assert.equal(h.gateProviders[0].endpoint,'https://example.test/proxy/rpc');
+  h.elements.get('rpc').value='https://custom.test/rpc';
+  const second=await h.api.provider();assert.notEqual(second,first);assert.equal(first.destroyed,true);
+  assert.equal(h.gateProviders.length,2);assert.equal(h.gateProviders[1].endpoint,'https://custom.test/rpc');
+});
+
+test('execution refuses an unavailable gate instead of bypassing the rate manager',async()=>{
+  const h=harness({missingGate:true});
+  await assert.rejects(h.api.provider(),/RPC request manager unavailable/);
+  assert.equal(h.calls.length,0);
 });
